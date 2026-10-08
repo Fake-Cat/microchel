@@ -9,7 +9,7 @@
 2. **Ключевые решения PHASE 2:** формат кадров `_NNN_DDD.png` (ADR-005); длительности — из имён файлов; приоритеты IDLE<BEHAVIOR<EVENT<REACTION; LRU-кэш 64 МБ; прерывание на границе кадра, возврат к idle.
 3. Окно работает с анимациями: `python -m microchel.desktop.main [--demo]`.
 4. **Открытое замечание:** неплавность вертикального движения (idle/walk) — улучшить в PHASE 4 (TESTING, Известные ошибки №1).
-5. **Git:** коммиты `9302f3f` (bootstrap), `987c3a8` (PHASE 1), `030d183` (docs); коммит PHASE 2 — создать/создан при закрытии. Лицензия MIT.
+5. **Git:** коммиты `9302f3f` (bootstrap), `987c3a8` (PHASE 1), `030d183` (docs), `3051dac` (PHASE 2). Лицензия MIT.
 6. **Следующее действие:** по команде — PHASE 3 (Character Behavior: FSM idle/walk/sleep/sit/coffee/thinking, события, автономный выбор).
 
 ## Ключевые решения / где что лежит
@@ -21,7 +21,7 @@
 
 ## Последняя завершённая задача
 
-Минимальный GUI-прототип: прозрачное frameless-окно 160×160 со спрайтом, drag ЛКМ с зажимом координат, контекстное меню «Выход», always-on-top флаг, логирование платформы Qt.
+PHASE 2 (Animation Engine): пакет `animation/` — парсер кадров `_NNN_DDD.png` (ADR-005), LRU-кэш 64 МБ, приоритетная очередь (idle<behavior<event<reaction), плеер с таймингами из имён файлов; интеграция в `PetWindow` (показ кадров, автоподстройка размера), флаг `--demo`; 77 тестов, ruff чисто; сценарии P2 подтверждены пользователем.
 
 ## Что реализовано
 
@@ -39,7 +39,7 @@
 | ОС / Python / Git | Ubuntu 26.04.1 x86-64, Python 3.14.4, Git 2.53.0 |
 | Сессия | **Wayland** (XDG_SESSION_TYPE=wayland), XWayland :0 доступен |
 | `.venv` | PySide6 **6.12.0 / Qt 6.12.0**, pytest 9.1.1, pytest-qt 4.5.0, ruff 0.16.10 |
-| `pytest` | **31 passed** |
+| `pytest` | **77 passed** |
 | `ruff check .` | **All checks passed** |
 | Спрайт | PNG 160×160 RGBA сгенерирован |
 | Нативный запуск | wayland: драг невозможен → **xcb: всё OK** (авто-выбор в main.py) |
@@ -60,16 +60,16 @@
 
 ## Следующее конкретное действие
 
-**PHASE 1 закрыт.** Дальше по очереди:
-1. Спросить пользователя: Git-коммит? Лицензия (MIT/Apache-2.0)?
-2. По команде — PHASE 2 (Animation Engine, формат `_NNN_DDD.png`, плеер, кэш).
+**PHASE 2 закрыт (коммит `3051dac`).** Дальше по очереди:
+1. Спросить команду на **PHASE 3 (Character Behavior)**: FSM idle/walk/sleep/sit/coffee/thinking, события пользователя/системы, автономный выбор (критерий ≥10 мин естественного поведения).
+2. Опционально: взять замечание по плавности движения (TESTING «Известные ошибки» №1) сейчас или оставить до PHASE 4.
 
 ## Команды для запуска и тестирования
 
 ```bash
 cd /home/fake-cat/projects/microchel
 source .venv/bin/activate
-pytest                                  # 26 passed
+pytest                                  # 77 passed
 ruff check .                            # чисто
 python -m microchel.desktop.main        # запуск питомца (под Wayland сам выберет xcb)
 QT_QPA_PLATFORM=offscreen python scripts/make_test_sprite.py   # перегенерация спрайта

@@ -18,6 +18,7 @@
 
 - `docs/decisions/ADR-002-windowing.md` — уточнён по факту: результаты проверки Wayland/XWayland.
 - `docs/TESTING.md` — сценарии 1–6 **все OK (2026-10-08)** + мультимонитор.
+- Git: созданы коммиты `9302f3f` (bootstrap) и `987c3a8` (PHASE 1).
 
 ### Удалено
 

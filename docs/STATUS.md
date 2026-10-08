@@ -8,7 +8,7 @@
 1. PHASE 0 ✅, **PHASE 1 ✅ закрыт**: все сценарии TESTING.md 1–6 OK, pytest **31 passed**, ruff чист.
 2. **Ключевые решения PHASE 1:** под Wayland авто-запуск через XWayland (`select_qt_platform()` → xcb, ADR-002); системная зависимость `libxcb-cursor0`; мультимониторный зажим `desktop_area()` (объединение всех экранов — пит ездит по 3 мониторам).
 3. Окно запускается: `python -m microchel.desktop.main` (xcb выбирается сам).
-4. **Открытый вопрос пользователю:** Git-коммит (всё ещё untracked; лицензия MIT выбрана 2026-10-08).
+4. **Git:** коммиты `9302f3f` (bootstrap/PHASE 0) и `987c3a8` (PHASE 1) созданы 2026-10-08; лицензия MIT.
 5. **Следующее действие:** по команде — PHASE 2 (Animation Engine, формат `_NNN_DDD.png`).
 
 ## Последняя завершённая задача

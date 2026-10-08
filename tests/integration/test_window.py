@@ -9,6 +9,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
+from microchel.animation.queue import Priority
 from microchel.desktop.geometry import desktop_area
 from microchel.desktop.window import PetWindow
 
@@ -62,3 +63,37 @@ class TestContextMenu:
 
     def test_window_visible_after_show(self, pet_window: PetWindow) -> None:
         assert pet_window.isVisible()
+
+
+class TestAnimationIntegration:
+    def test_setup_animation_connects_player(self, pet_window: PetWindow) -> None:
+        # ассеты проекта: assets/characters/test/{Idle,Blink,Walk}/...
+        assert pet_window.setup_animation() is True
+        assert pet_window.player is not None
+        names = pet_window.available_clip_names()
+        assert any(name.startswith("Idle/") for name in names)
+        # первый кадр показан сразу
+        assert pet_window.player.frame_pixmap is not None
+        assert pet_window.player.current_clip is not None
+        assert pet_window.player.current_clip.name.startswith("Idle/")
+
+    def test_empty_root_falls_back_to_static_sprite(self, pet_window: PetWindow) -> None:
+        assert pet_window.setup_animation(Path("/nonexistent-root")) is False
+        assert pet_window.player is None
+
+    def test_play_clip_by_prefix(self, pet_window: PetWindow) -> None:
+        assert pet_window.setup_animation() is True
+        # Blink — приоритетнее idle, прерывает на границе кадра
+        assert pet_window.play_clip("Blink/", priority=Priority.EVENT, loop=False) is True
+        assert pet_window.player is not None
+        assert (
+            pet_window.player.pending is not None
+            or (
+                pet_window.player.current_clip is not None
+                and pet_window.player.current_clip.name.startswith("Blink/")
+            )
+        )
+
+    def test_play_clip_unknown_prefix_returns_false(self, pet_window: PetWindow) -> None:
+        assert pet_window.setup_animation() is True
+        assert pet_window.play_clip("DoesNotExist/") is False

@@ -58,5 +58,6 @@ FSM (PHASE 3): `IDLE, WALK, SIT, SLEEP, WAKE, COFFEE, THINKING, TYPING, TALKING`
 ## Что реализовано (честный список)
 
 - **PHASE 0**: структура репозитория, вся документация, ADR-001…005, pyproject.toml, окружение (.venv).
-- **PHASE 1**: `desktop/main.py` (точка входа), `desktop/window.py` (`PetWindow` — frameless, прозрачность, always-on-top флаг, drag с зажимом координат, меню «Выход»), `desktop/geometry.py` (чистая геометрия), `common/logging_config.py`, генератор тестового спрайта, 21 тест.
-- **Не реализовано**: animation engine, character FSM, agent, tools, voice, monitoring, memory — всё это только спроектировано (см. ROADMAP.md).
+- **PHASE 1**: `desktop/main.py` (точка входа), `desktop/window.py` (`PetWindow` — frameless, прозрачность, always-on-top флаг, drag с зажимом координат, меню «Выход»), `desktop/geometry.py` (чистая геометрия), `common/logging_config.py`, генератор тестового спрайта.
+- **PHASE 2**: пакет `animation/` — `frames.py` (загрузчик кадров `_NNN_DDD.png`), `cache.py` (LRU-кэш ресурсов), `queue.py` (приоритеты запросов), `player.py` (плеер с таймингами из имён файлов, loop, переходами); интеграция в `PetWindow` (показ кадров, автоподстройка размера), `--demo` в точке входа; 77 тестов.
+- **Не реализовано**: character FSM, agent, tools, voice, monitoring, memory — всё это только спроектировано (см. ROADMAP.md).

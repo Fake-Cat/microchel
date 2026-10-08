@@ -2,6 +2,23 @@
 
 Формат: по датам, новые сверху.
 
+## 2026-10-08 — PHASE 2 (Animation Engine)
+
+### Добавлено
+
+- `docs/PHASE2_PLAN.md` — требования и план PHASE 2.
+- `src/microchel/animation/`: `frames.py` (парсер `_NNN_DDD.png`, load_clip, discover), `cache.py` (LRU-кэш по байтам), `queue.py` (приоритеты IDLE/BEHAVIOR/EVENT/REACTION), `player.py` (плеер: тайминги из имён, loop, прерывание на границе кадра, возврат к idle).
+- `scripts/make_test_animations.py` — генератор демо-клипов (idle/blink/walk, 17 кадров).
+- `assets/characters/test/{Idle,Blink,Walk}/…` — сгенерированные тестовые кадры.
+- `tests/unit/test_frames.py`, `tests/unit/test_cache.py`, `tests/unit/test_queue.py`, `tests/integration/test_player.py` (итого 77 passed).
+
+### Изменено
+
+- `desktop/window.py` — `setup_animation()`, показ кадров плеера, автоподстройка размера с сохранением центра, `play_clip()`.
+- `desktop/main.py` — флаг `--demo` (случайные анимации каждые 4 с).
+
+---
+
 ## 2026-10-08 — PHASE 1 (bootstrap + Minimal Desktop Pet)
 
 ### Добавлено

@@ -1,15 +1,23 @@
 # docs/STATUS.md — текущее состояние
 
 **Дата последнего обновления:** 2026-10-08
-**Текущий этап:** **PHASE 1 — ЗАКРЫТ (2026-10-08)**; следующий — PHASE 2 (Animation Engine), ждём команды
+**Текущий этап:** **PHASE 2 — ЗАКРЫТ (2026-10-08, с замечанием по плавности → PHASE 4)**; следующий — PHASE 3 (Character Behavior), ждём команды
 
 ## Где мы находимся (для продолжения в новом сеансе)
 
-1. PHASE 0 ✅, **PHASE 1 ✅ закрыт**: все сценарии TESTING.md 1–6 OK, pytest **31 passed**, ruff чист.
-2. **Ключевые решения PHASE 1:** под Wayland авто-запуск через XWayland (`select_qt_platform()` → xcb, ADR-002); системная зависимость `libxcb-cursor0`; мультимониторный зажим `desktop_area()` (объединение всех экранов — пит ездит по 3 мониторам).
-3. Окно запускается: `python -m microchel.desktop.main` (xcb выбирается сам).
-4. **Git:** коммиты `9302f3f` (bootstrap/PHASE 0) и `987c3a8` (PHASE 1) созданы 2026-10-08; лицензия MIT.
-5. **Следующее действие:** по команде — PHASE 2 (Animation Engine, формат `_NNN_DDD.png`).
+1. PHASE 0 ✅, PHASE 1 ✅, **PHASE 2 ✅ закрыт**: анимационный движок (`animation/`: frames/cache/queue/player), интеграция в окно, `--demo`; **pytest 77 passed, ruff чист**; сценарии P2 подтверждены пользователем; RSS стабилен (104356 kB / 6 мин).
+2. **Ключевые решения PHASE 2:** формат кадров `_NNN_DDD.png` (ADR-005); длительности — из имён файлов; приоритеты IDLE<BEHAVIOR<EVENT<REACTION; LRU-кэш 64 МБ; прерывание на границе кадра, возврат к idle.
+3. Окно работает с анимациями: `python -m microchel.desktop.main [--demo]`.
+4. **Открытое замечание:** неплавность вертикального движения (idle/walk) — улучшить в PHASE 4 (TESTING, Известные ошибки №1).
+5. **Git:** коммиты `9302f3f` (bootstrap), `987c3a8` (PHASE 1), `030d183` (docs); коммит PHASE 2 — создать/создан при закрытии. Лицензия MIT.
+6. **Следующее действие:** по команде — PHASE 3 (Character Behavior: FSM idle/walk/sleep/sit/coffee/thinking, события, автономный выбор).
+
+## Ключевые решения / где что лежит
+
+- Плеер: `src/microchel/animation/player.py`; формат кадров — ADR-005 (`_NNN_DDD.png`).
+- Приоритеты: `animation/queue.py::Priority` (reaction > event > behavior > idle).
+- Кэш: `animation/cache.py::FrameCache` — LRU, дефолт 64 МБ, без Qt (загрузчик-колбэк).
+- Демо-ассеты: `scripts/make_test_animations.py` → `assets/characters/test/{Idle,Blink,Walk}/` (свой материал, ADR-004 не задет).
 
 ## Последняя завершённая задача
 

@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Виртуальное окружение
+.venv/
+venv/
+env/
+
+# Кэши и инструменты
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Секреты и локальная конфигурация
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Логи и временные файлы
+*.log
+tmp/
+*.tmp
+
+# Не коммитить чужие графические материалы без проверки лицензии:
+# временные скачанные ресурсы VPet складывать в vendor/ (см. .gitignore)
+vendor/

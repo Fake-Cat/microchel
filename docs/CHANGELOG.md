@@ -2,6 +2,43 @@
 
 Формат: по датам, новые сверху.
 
+## 2026-10-08 — PHASE 3: результаты P3-1…P3-7 и фикс загрузки конфига
+
+### Исправлено
+
+- `desktop/main.py::start_behavior` — вызывал `load_behavior_config()` **без пути** → `path=None` → всегда дефолты: `config/behavior.toml` в приложении не читался (тесты были зелёные, т.к. файл зеркалит дефолты). Теперь передаётся `DEFAULT_CONFIG_PATH`; регресс-тест `test_start_behavior_loads_config_file`.
+
+### Добавлено
+
+- Результаты ручных сценарий **P3-1…P3-7 — все OK (2026-10-08)** в TESTING.md (автономность ≥10 мин, ходьба с разворотом у края, RSS 104,5→105,5 МБ, ночь, события 47–89 с, клик/драг).
+- Референс внешности и фонов: `docs/Микрочел_ питомец на Raspberry Pi.png` (собственный материал, подтверждено пользователем 2026-10-08). Идея «фон-задник за персонажем для отдельных состояний/эмоций/задач» → ROADMAP, PHASE 4.
+- TESTING.md, Известные ошибки №3 — «blink поверх сна» как UX-замечание → PHASE 4.
+- Тестов: **167 passed** (было 162), ruff чисто.
+
+---
+
+## 2026-10-08 — PHASE 3 (Character Behavior, шаги 1–9)
+
+### Добавлено
+
+- `docs/PHASE3_PLAN.md` — требования FR-P3.1…NF-P3.5 и план шагов 1–11.
+- `src/microchel/common/events.py` — `UserEvent` (CLICK/DRAG_START/DRAG_END), `SystemEvent` (SYNTHETIC), `CharacterAction`; `src/microchel/common/event_bus.py` — синхронная шина.
+- `src/microchel/character/`: `states.py` (enum + маппинг состояние→клип/приоритет), `config.py` + `config/behavior.toml` (тайминги, веса, ночь, шаг ходьбы; битые значения → дефолт), `fsm.py` (`BehaviorFSM` — взвешенный автономный выбор, seeded Random, ночь, события), `controller.py` (`CharacterController` — 2 QTimer, шина, play/move-колбэки; `EdgeWalker` — разворот у края).
+- `scripts/make_test_animations.py` — клипы Sleep/Sit/Coffee/Thinking (позы, Z, кружка, пузырьки; итого 7 клипов).
+- `--demo-events` — синтетические системные события раз в 45–90 с (заглушка источника до PHASE 7).
+- `--showcase` — последовательный показ всех клипов по 10 с (Idle → Blink → Coffee → Sit → Sleep → Thinking → Walk, цикл повторяется; взаимоисключен с `--demo`).
+- Тесты: `tests/unit/test_{events,states,behavior_config,fsm,controller}.py`, `tests/integration/test_{character_controller,start_behavior,demo_events}.py` — **162 passed**.
+
+### Изменено
+
+- `desktop/window.py` — `bus` в конструкторе; клик/драг → `UserEvent` (порог 5 px); `move_by(dx)` (возврат «двигнулось») для ходьбы.
+- `desktop/main.py` — сборка поведения (`start_behavior`, `states_with_clips`: нет клипа → состояние исключено с предупреждением); `--demo` отключает FSM (FR-P3.8).
+- `animation/player.py` — `restart=True` немеденно заменяет текущий клип (в т.ч. другой — переходы looping-состояний); `_start_next` не перетирает клип, запущенный слушателем `animation_finished`.
+- `desktop/window.py::play_clip` — параметр `restart`.
+- `docs/ARCHITECTURE.md` — «Форматы событий» и «Модель состояний» зафиксированы (уточнены в PHASE 3).
+
+---
+
 ## 2026-10-08 — PHASE 2 (Animation Engine)
 
 ### Добавлено

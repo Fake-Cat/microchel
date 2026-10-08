@@ -109,6 +109,8 @@ class AnimationPlayer(QObject):
         - Приоритет выше текущего — прервать на границе кадра (pending).
         - Равный приоритет и уже играет этот же клип — без действия (restart=True принудительно).
         - Равный/ниже приоритет — в очередь FIFO.
+        - restart=True — немедленная замена текущего запроса (другой клип тоже);
+          так FSM меняет looping-состояния без застревания в очереди (PHASE 3).
         """
         request = AnimationRequest(clip=clip, priority=priority, loop=loop, restart=restart)
         if self._clip is None or self._request is None:
@@ -117,8 +119,8 @@ class AnimationPlayer(QObject):
         same_clip = clip.name == self._request.clip.name
         if same_clip and not restart and priority <= self._request.priority:
             return  # уже играет — не перезапускаем (FR-P2.4)
-        if restart and same_clip and priority >= self._request.priority:
-            self._start(request)  # явный рестарт — немедленно
+        if restart:
+            self._start(request)  # принудительная замена — немедленно (PHASE 3: смена состояний)
             return
         if priority > self._request.priority:
             self._pending = request  # прерывание на границе кадра
@@ -209,6 +211,9 @@ class AnimationPlayer(QObject):
         request = self._queue.pop_best()
         if request is not None:
             self._start(request)
+            return
+        if self._clip is not None:
+            # слушатель animation_finished уже запустил новую анимацию (PHASE 3)
             return
         if self._idle_clip is not None:
             self._start(AnimationRequest(clip=self._idle_clip, priority=Priority.IDLE, loop=True))

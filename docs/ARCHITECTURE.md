@@ -35,21 +35,20 @@ voice/ — STT/TTS/wake word (поздние этапы)
 
 Один процесс Python, один Qt event loop в главном потоке. Долгие операции (LLM, инструменты, мониторинг) — в `QThread`/`QThreadPool` либо отдельном процессе через `multiprocessing`. GUI никогда не ждёт сеть синхронно.
 
-## Форматы событий (предварительно)
+## Форматы событий (зафиксировано в PHASE 3)
 
-События — dataclass/TypedDict в `common/events.py`:
+События — frozen dataclass в `common/events.py`, доставка через синхронный `common/event_bus.py` (главный поток, подписка по типу):
 
-- `AnimationRequest(state, priority)` — запрос анимации
-- `CharacterAction(action)` — действие FSM (walk, sleep, coffee…)
-- `SystemEvent(kind, payload)` — системное событие от monitoring
-- `AgentTaskStarted/AgentTaskFinished(task_id, status)` — статус задачи
-- `UserPrompt(text)` — поручение пользователя
+- `UserEvent(kind)` — пользователь: `CLICK`, `DRAG_START`, `DRAG_END` (окно → контроллер).
+- `SystemEvent(kind, payload)` — системное: до PHASE 7 только `SYNTHETIC` (`--demo-events`).
+- `CharacterAction(action)` — действие FSM наружу (`walk`, `sleep`, …; в PHASE 5 свяжется с агентом).
+- `AgentTaskStarted/AgentTaskFinished(task_id, status)` и `UserPrompt(text)` — PHASE 5.
 
-Точная схема уточняется в PHASE 3/5 и фиксируется здесь же.
+Поток событий: `PetWindow` (клик/драг) → `EventBus.emit(UserEvent)` → `CharacterController` → `fsm.on_event()` → смена состояния → колбэки `play(...)`/`move_by(dx)` → плеер/окно. Анимационные запросы — НЕ события шины: контроллер вызывает плеер напрямую колбэком, приоритеты `animation/queue.py::Priority` (reaction > event > behavior > idle).
 
-## Модель состояний персонажа (предварительно)
+## Модель состояний персонажа (уточнена в PHASE 3)
 
-FSM (PHASE 3): `IDLE, WALK, SIT, SLEEP, WAKE, COFFEE, THINKING, TYPING, TALKING` + эмоциональные реакции `HAPPY, ANGRY, PANIC, SUCCESS, ERROR, BLINK` как приоритетные перекрывающие анимации. Приоритеты: реакция пользователя > системное событие > автономное поведение > idle.
+FSM реализован в `character/` (чистое ядро без Qt): `CharacterState` = `IDLE, WALK, SLEEP, SIT, COFFEE, THINKING` (`states.py`), тайминги/веса/ночь — `config/behavior.toml` (`config.py`), выбор — `fsm.py` (seeded `random.Random`, ночь через `hour`-колбэк), Qt-клей — `controller.py` (2 QTimer, подписка на шину, разворот у края `EdgeWalker`). Состояния: IDLE ↔ одноразовые (после окончания — возврат в IDLE); клип состояния с `loop=True`, приоритет BEHAVIOR (idle-состояние — IDLE); реакция на клик — REACTION поверх состояния с возвратом к нему. Доступность состояния определяется наличием клипа (нет клипа → состояние пропущено с предупреждением, FR-P3.1). `WAKE`, `TYPING`, `TALKING` и эмоциональные реакции `HAPPY, ANGRY, PANIC, SUCCESS, ERROR` (как приоритетные перекрывающие анимации) — PHASE 4/5.
 
 ## Обоснование решений
 
@@ -60,4 +59,5 @@ FSM (PHASE 3): `IDLE, WALK, SIT, SLEEP, WAKE, COFFEE, THINKING, TYPING, TALKING`
 - **PHASE 0**: структура репозитория, вся документация, ADR-001…005, pyproject.toml, окружение (.venv).
 - **PHASE 1**: `desktop/main.py` (точка входа), `desktop/window.py` (`PetWindow` — frameless, прозрачность, always-on-top флаг, drag с зажимом координат, меню «Выход»), `desktop/geometry.py` (чистая геометрия), `common/logging_config.py`, генератор тестового спрайта.
 - **PHASE 2**: пакет `animation/` — `frames.py` (загрузчик кадров `_NNN_DDD.png`), `cache.py` (LRU-кэш ресурсов), `queue.py` (приоритеты запросов), `player.py` (плеер с таймингами из имён файлов, loop, переходами); интеграция в `PetWindow` (показ кадров, автоподстройка размера), `--demo` в точке входа; 77 тестов.
-- **Не реализовано**: character FSM, agent, tools, voice, monitoring, memory — всё это только спроектировано (см. ROADMAP.md).
+- **PHASE 3 (код)**: `common/events.py` + `common/event_bus.py` (типы событий, синхронная шина); `character/` — `states.py` (enum + маппинг состояние→клип), `config.py` + `config/behavior.toml` (тайминги/веса/ночь, tomllib), `fsm.py` (автономный взвешенный выбор, seeded Random), `controller.py` (QTimer-тик, ходьба с разворотом, реакции); клик/драг → события в окне; `--demo` (отключает FSM) и `--demo-events` в точке входа; клипы Sleep/Sit/Coffee/Thinking; 162 теста. Ручные сценарии P3 — в TESTING.md.
+- **Не реализовано**: agent, tools, voice, monitoring, memory, эмоции/WAKE (PHASE 4) — всё это только спроектировано (см. ROADMAP.md).

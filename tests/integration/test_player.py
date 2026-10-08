@@ -145,3 +145,32 @@ class TestTransitions:
         # walk в очереди: текущая анимация всё ещё idle
         assert player.current_clip is not None
         assert player.current_clip.name == "Idle/State"
+
+    def test_restart_replaces_other_clip_immediately(
+        self, player: AnimationPlayer, clips: dict[str, AnimationClip]
+    ) -> None:
+        """restart=True — немедленная замена даже другого клипа (PHASE 3: смена состояний)."""
+        player.play(clips["idle"], priority=Priority.IDLE)
+        player.play(clips["walk"], priority=Priority.IDLE, restart=True)
+        assert player.current_clip is not None
+        assert player.current_clip.name == "Walk/State"
+        assert player.pending is None
+
+    def test_finished_listener_clip_not_replaced_by_idle(
+        self, qtbot: QtBot, player: AnimationPlayer, clips: dict[str, AnimationClip]
+    ) -> None:
+        """Клип, запущенный слушателем animation_finished, не перетирается idle-фоллбэком."""
+        player.set_idle(clips["idle"])
+        player.play(clips["blink"], priority=Priority.EVENT, loop=False)
+
+        def resume(_name: str) -> None:
+            player.play(clips["walk"], priority=Priority.BEHAVIOR, loop=True, restart=True)
+
+        player.animation_finished.connect(resume)
+        qtbot.waitUntil(
+            lambda: player.current_clip is not None and player.current_clip.name == "Walk/State",
+            timeout=2000,
+        )
+        qtbot.wait(FRAME_MS * 3)  # idle-фоллбэк успел бы перетёреть, если бы мог
+        assert player.current_clip is not None
+        assert player.current_clip.name == "Walk/State"

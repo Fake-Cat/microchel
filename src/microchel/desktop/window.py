@@ -16,6 +16,8 @@ from PySide6.QtWidgets import QApplication, QMenu, QWidget
 from microchel.animation.frames import AnimationClip, ClipLoadError, discover_clip_dirs, load_clip
 from microchel.animation.player import AnimationPlayer
 from microchel.animation.queue import Priority
+from microchel.common.event_bus import EventBus
+from microchel.common.events import UserEvent, UserEventKind
 from microchel.desktop.geometry import clamp_to_screen, desktop_area
 
 logger = logging.getLogger(__name__)
@@ -25,14 +27,24 @@ DEFAULT_SPRITE = (
 )
 DEFAULT_ANIMATION_ROOT = Path(__file__).resolve().parents[3] / "assets" / "characters" / "test"
 DEFAULT_SIZE = 160
+DRAG_THRESHOLD_PX = 5  # смещение ЛКМ ≥ порога — это уже драг, не клик (FR-P3.5)
 
 
 class PetWindow(QWidget):
     """Прозрачное окно с тестовым спрайтом и перетаскиванием."""
 
-    def __init__(self, sprite_path: Path | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        sprite_path: Path | None = None,
+        parent: QWidget | None = None,
+        *,
+        bus: EventBus | None = None,
+    ) -> None:
         super().__init__(parent)
         self._drag_offset: QPoint | None = None
+        self._press_pos: QPoint | None = None  # глобальная позиция ЛКМ при нажатии
+        self._dragged = False  # был ли драг от порога до отпускания
+        self._bus = bus
         self._sprite_path = sprite_path or DEFAULT_SPRITE
         self._sprite = QPixmap(str(self._sprite_path))
         if self._sprite.isNull():
@@ -94,13 +106,14 @@ class PetWindow(QWidget):
         *,
         priority: Priority = Priority.BEHAVIOR,
         loop: bool | int = True,
+        restart: bool = False,
     ) -> bool:
-        """Запросить анимацию по префиксу имени (для демо и будущего character)."""
+        """Запросить анимацию по префиксу имени (демо, character, тесты)."""
         if self._player is None:
             return False
         for name, clip in self._clips.items():
             if name.startswith(name_prefix):
-                self._player.play(clip, priority=priority, loop=loop)
+                self._player.play(clip, priority=priority, loop=loop, restart=restart)
                 return True
         logger.warning("Клип не найден по префиксу: %s", name_prefix)
         return False
@@ -142,6 +155,8 @@ class PetWindow(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_offset = event.globalPosition().toPoint() - self.pos()
+            self._press_pos = event.globalPosition().toPoint()
+            self._dragged = False
             logger.info(
                 "ЛКМ нажата: global=%s pos=%s offset=%s",
                 event.globalPosition().toPoint(),
@@ -152,6 +167,11 @@ class PetWindow(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            if not self._dragged and self._press_pos is not None:
+                delta = event.globalPosition().toPoint() - self._press_pos
+                if delta.manhattanLength() >= DRAG_THRESHOLD_PX:
+                    self._dragged = True
+                    self._emit_user_event(UserEventKind.DRAG_START)
             target = event.globalPosition().toPoint() - self._drag_offset
             logger.debug("drag: target=%s (окно сейчас %s)", target, self.pos())
             self.move_clamped(target)
@@ -160,7 +180,15 @@ class PetWindow(QWidget):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             logger.info("ЛКМ отпущена: окно осталось в %s", self.pos())
+            if self._dragged:
+                self._emit_user_event(UserEventKind.DRAG_END)
+            elif self._press_pos is not None:
+                delta = event.globalPosition().toPoint() - self._press_pos
+                if delta.manhattanLength() < DRAG_THRESHOLD_PX:
+                    self._emit_user_event(UserEventKind.CLICK)
             self._drag_offset = None
+            self._press_pos = None
+            self._dragged = False
 
     def move_clamped(self, pos: QPoint) -> None:
         """Переместить окно, зажав координаты в общей рабочей области всех экранов.
@@ -183,6 +211,19 @@ class PetWindow(QWidget):
                 clamped,
                 moved,
             )
+
+    def move_by(self, dx: int) -> bool:
+        """Сдвиг по X для ходьбы (FR-P3.4): True — позиция реально изменилась."""
+        before = self.pos()
+        self.move_clamped(before + QPoint(dx, 0))
+        return self.pos() != before
+
+    def _emit_user_event(self, kind: UserEventKind) -> None:
+        """Отправить событие пользователя в шину (FR-P3.5); без шины — no-op."""
+        if self._bus is None:
+            return
+        logger.info("Событие пользователя: %s", kind.value)
+        self._bus.emit(UserEvent(kind=kind))
 
     # --- контекстное меню ----------------------------------------------
 

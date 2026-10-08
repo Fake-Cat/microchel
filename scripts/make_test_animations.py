@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen, QPixmap
 
 SIZE = 160
 ROOT = Path(__file__).resolve().parents[1] / "assets" / "characters" / "test"
@@ -22,7 +22,7 @@ SKIN = QColor("#ffe3c7")
 HAIR = QColor("#5a3e2b")
 
 # (каталог клипа относительно ROOT, кадры: (длительность_мс, параметры))
-CLIPS: dict[str, list[tuple[int, dict[str, float | bool]]]] = {
+CLIPS: dict[str, list[tuple[int, dict[str, float | bool | str]]]] = {
     "Idle/Happy/1": [
         (250, {"breath": 0}),
         (250, {"breath": 2}),
@@ -46,12 +46,56 @@ CLIPS: dict[str, list[tuple[int, dict[str, float | bool]]]] = {
         (125, {"step": 0, "lean": 0}),
         (125, {"step": -3, "lean": 1}),
     ],
+    # PHASE 3: состояния поведения (формат тот же, материал собственный)
+    "Sleep/Calm/1": [
+        (400, {"pose": "lie", "eyes": "closed", "z": 1, "breath": 0}),
+        (400, {"pose": "lie", "eyes": "closed", "z": 2, "breath": 3}),
+        (400, {"pose": "lie", "eyes": "closed", "z": 3, "breath": 5}),
+        (400, {"pose": "lie", "eyes": "closed", "z": 2, "breath": 3}),
+        (400, {"pose": "lie", "eyes": "closed", "z": 1, "breath": 1}),
+        (400, {"pose": "lie", "eyes": "closed", "z": 3, "breath": 0}),
+    ],
+    "Sit/Calm/1": [
+        (300, {"pose": "sit", "breath": 0}),
+        (300, {"pose": "sit", "breath": 2}),
+        (300, {"pose": "sit", "breath": 4}),
+        (300, {"pose": "sit", "breath": 2}),
+    ],
+    "Coffee/Happy/1": [
+        (350, {"pose": "sit", "cup": True, "eyes": "open"}),
+        (350, {"pose": "sit", "cup": True, "cup_up": True, "eyes": "half"}),
+        (500, {"pose": "sit", "cup": True, "cup_up": True, "eyes": "closed"}),
+        (350, {"pose": "sit", "cup": True, "eyes": "open"}),
+        (450, {"pose": "sit", "cup": True, "eyes": "half"}),
+    ],
+    "Thinking/Curious/1": [
+        (300, {"eyes": "up", "dots": 1}),
+        (300, {"eyes": "up", "dots": 2}),
+        (300, {"eyes": "up", "dots": 3}),
+        (450, {"eyes": "up", "dots": 2}),
+        (300, {"eyes": "up", "dots": 1}),
+    ],
 }
 
 
-def render_frame(size: int, *, breath: float = 0, eyes: str = "open", step: float = 0,
-                 lean: float = 0) -> QPixmap:
-    """Нарисовать кадр фигурки-заглушки с прозрачным фоном."""
+def render_frame(
+    size: int,
+    *,
+    breath: float = 0,
+    eyes: str = "open",
+    step: float = 0,
+    lean: float = 0,
+    pose: str = "stand",
+    z: float = 0,
+    cup: bool = False,
+    cup_up: bool = False,
+    dots: float = 0,
+) -> QPixmap:
+    """Нарисовать кадр фигурки-заглушки с прозрачным фоном.
+
+    pose: stand — прямо, sit — сидит, lie — лёжа (сон). z — «Z» у сна,
+    dots — пузырьки мысли, cup/cup_up — кружка кофе.
+    """
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
 
@@ -61,16 +105,33 @@ def render_frame(size: int, *, breath: float = 0, eyes: str = "open", step: floa
         painter.translate(lean, -breath)
         painter.setPen(QPen(QColor(OUTLINE), 3))
 
+        # тело (зависит от позы)
         painter.setBrush(BODY)
-        painter.drawRoundedRect(QRectF(size * 0.28, size * 0.45, size * 0.44, size * 0.45), 24, 24)
+        if pose == "lie":
+            body = QRectF(size * 0.14, size * 0.58, size * 0.72, size * 0.3)
+            painter.drawRoundedRect(body, 20, 20)
+        elif pose == "sit":
+            body = QRectF(size * 0.3, size * 0.55, size * 0.4, size * 0.35)
+            painter.drawRoundedRect(body, 24, 24)
+        else:
+            body = QRectF(size * 0.28, size * 0.45, size * 0.44, size * 0.45)
+            painter.drawRoundedRect(body, 24, 24)
 
+        # голова и лицо — со смещением позы
+        painter.save()
+        if pose == "lie":
+            painter.translate(-size * 0.14, size * 0.22)
+        elif pose == "sit":
+            painter.translate(0, size * 0.04)
+
+        painter.setPen(QPen(QColor(OUTLINE), 3))
         painter.setBrush(SKIN)
         painter.drawEllipse(QRectF(size * 0.2, size * 0.1, size * 0.6, size * 0.5))
 
         painter.setBrush(HAIR)
         painter.drawArc(QRectF(size * 0.19, size * 0.07, size * 0.62, size * 0.3), 0, 180 * 16)
 
-        # глаза (мигание)
+        # глаза (мигание / взгляд вверх)
         painter.setBrush(QColor(OUTLINE))
         painter.setPen(Qt.PenStyle.NoPen)
         eye_y = size * 0.33
@@ -81,6 +142,9 @@ def render_frame(size: int, *, breath: float = 0, eyes: str = "open", step: floa
         elif eyes == "half":
             painter.drawEllipse(QPointF(size * 0.38, eye_y), 5, 4)
             painter.drawEllipse(QPointF(size * 0.62, eye_y), 5, 4)
+        elif eyes == "up":
+            painter.drawEllipse(QPointF(size * 0.38, eye_y - 4), 5, 5)
+            painter.drawEllipse(QPointF(size * 0.62, eye_y - 4), 5, 5)
         else:
             painter.drawEllipse(QPointF(size * 0.38, eye_y), 5, 7)
             painter.drawEllipse(QPointF(size * 0.62, eye_y), 5, 7)
@@ -88,13 +152,41 @@ def render_frame(size: int, *, breath: float = 0, eyes: str = "open", step: floa
         painter.setPen(QPen(QColor(OUTLINE), 2))
         smile = QRectF(size * 0.42, size * 0.35, size * 0.16, size * 0.12)
         painter.drawArc(smile, 180 * 16, 180 * 16)
+        painter.restore()
 
-        # «ноги» (шаг)
+        # «ноги» (шаг / поза)
         foot_y = size * 0.9
-        left_x = size * 0.4 - step
-        right_x = size * 0.6 + step
-        painter.drawLine(QPointF(left_x, foot_y), QPointF(left_x, size * 0.98))
-        painter.drawLine(QPointF(right_x, foot_y), QPointF(right_x, size * 0.98))
+        if pose == "stand":
+            left_x = size * 0.4 - step
+            right_x = size * 0.6 + step
+            painter.drawLine(QPointF(left_x, foot_y), QPointF(left_x, size * 0.98))
+            painter.drawLine(QPointF(right_x, foot_y), QPointF(right_x, size * 0.98))
+        elif pose == "sit":
+            painter.drawLine(QPointF(size * 0.4, foot_y), QPointF(size * 0.55, foot_y))
+            painter.drawLine(QPointF(size * 0.6, foot_y), QPointF(size * 0.75, foot_y))
+
+        # кружка кофе
+        if cup:
+            painter.setBrush(QColor("#ffffff"))
+            painter.setPen(QPen(QColor(OUTLINE), 2))
+            cup_y = size * (0.44 if cup_up else 0.6)
+            painter.drawRoundedRect(QRectF(size * 0.68, cup_y, size * 0.14, size * 0.12), 4, 4)
+
+        # пузырьки мысли
+        if dots:
+            painter.setBrush(QColor("#ffffff"))
+            painter.setPen(QPen(QColor(OUTLINE), 2))
+            for index in range(int(dots)):
+                radius = 3 + 2 * index
+                painter.drawEllipse(
+                    QPointF(size * 0.72 + index * 9, size * 0.26 - index * 9), radius, radius
+                )
+
+        # «Z» (сон)
+        if z:
+            painter.setPen(QPen(QColor(OUTLINE), 2))
+            painter.setFont(QFont("Sans", int(8 + 3 * z), QFont.Weight.Bold))
+            painter.drawText(QPointF(size * 0.62 + z * 3, size * 0.2), "Z")
     finally:
         painter.end()
     return pixmap

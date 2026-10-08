@@ -1,80 +1,83 @@
 # docs/STATUS.md — текущее состояние
 
-**Дата последнего обновления:** 2026-10-08
-**Текущий этап:** **PHASE 2 — ЗАКРЫТ (2026-10-08, с замечанием по плавности → PHASE 4)**; следующий — PHASE 3 (Character Behavior), ждём команды
+**Дата последнего обновления:** 2026-10-08 (вечер)
+**Текущий этап:** **PHASE 3 — Character Behavior — шаг 10 (ручные сценарии) ВЫПОЛНЕН**; остался шаг 11 — коммит по команде пользователя
 
 ## Где мы находимся (для продолжения в новом сеансе)
 
-1. PHASE 0 ✅, PHASE 1 ✅, **PHASE 2 ✅ закрыт**: анимационный движок (`animation/`: frames/cache/queue/player), интеграция в окно, `--demo`; **pytest 77 passed, ruff чист**; сценарии P2 подтверждены пользователем; RSS стабилен (104356 kB / 6 мин).
-2. **Ключевые решения PHASE 2:** формат кадров `_NNN_DDD.png` (ADR-005); длительности — из имён файлов; приоритеты IDLE<BEHAVIOR<EVENT<REACTION; LRU-кэш 64 МБ; прерывание на границе кадра, возврат к idle.
-3. Окно работает с анимациями: `python -m microchel.desktop.main [--demo]`.
-4. **Открытое замечание:** неплавность вертикального движения (idle/walk) — улучшить в PHASE 4 (TESTING, Известные ошибки №1).
-5. **Git:** коммиты `9302f3f` (bootstrap), `987c3a8` (PHASE 1), `030d183` (docs), `3051dac` (PHASE 2). Лицензия MIT.
-6. **Следующее действие:** по команде — PHASE 3 (Character Behavior: FSM idle/walk/sleep/sit/coffee/thinking, события, автономный выбор).
+1. PHASE 0 ✅, PHASE 1 ✅, PHASE 2 ✅. **PHASE 3: шаги 1–10 выполнены** (план `docs/PHASE3_PLAN.md`): события/шина, states/config/fsm/controller, `config/behavior.toml`, генератор клипов, интеграция окно+main, флаги `--demo` / `--demo-events` / `--showcase`; тесты **167 passed, ruff чисто**.
+2. **Сценарии P3-1…P3-7 — все подтверждены** (TESTING.md, 2026-10-08): автономность ≥10 мин, ходьба с разворотом у края (лог `разворот → -1`, позиция 5500→5563→5447), клик/драг глазами пользователя, 13+ событий `--demo-events` (интервалы 47–89 с), ночь (сон 14,4 мин из прогонного окна), RSS 104,5→105,5 МБ.
+3. **Найден и исправлен баг:** `start_behavior` вызывал `load_behavior_config()` без пути → `path=None` → всегда дефолты, `config/behavior.toml` в приложении **не читался вообще** (тесты были зелёные, т.к. файл зеркалит дефолты). Фикс: `load_behavior_config(DEFAULT_CONFIG_PATH)` + регресс-тест `test_start_behavior_loads_config_file`.
+4. **Ключевые решения PHASE 3:** FSM чистый (без Qt), случайность через seeded `random.Random`, ночь — через `hour`-колбэк; `night.sleep_weight = 300` (сон ~78% ночью, выбор пользователя); state-клипы `loop=True` + `restart=True` (правка плеера); реакция на клик REACTION с возвратом через `animation_finished`; разворот у края — `EdgeWalker` (чистый, юнит-тесты); `available` FSM = состояния с клипами (нет клипа → пропуск, FR-P3.1).
+5. **UX-наблюдение:** системные события поверх сна (blink ~570 мс стоячей позой) выглядят как «резкое пробуждение на секунду» — сон FSM не прерывается. В TESTING.md «Известные ошибки» №3 → PHASE 4 (лежачий blink/пауза реакций в сне).
+6. **Git:** коммиты `9302f3f`, `987c3a8`, `030d183`, `3051dac`, `bbe51e8`; все изменения PHASE 3 **не закоммичены** (коммит — по команде).
+7. **Следующее действие:** коммит PHASE 3 по команде пользователя (документация обновлена).
 
 ## Ключевые решения / где что лежит
 
-- Плеер: `src/microchel/animation/player.py`; формат кадров — ADR-005 (`_NNN_DDD.png`).
-- Приоритеты: `animation/queue.py::Priority` (reaction > event > behavior > idle).
-- Кэш: `animation/cache.py::FrameCache` — LRU, дефолт 64 МБ, без Qt (загрузчик-колбэк).
-- Демо-ассеты: `scripts/make_test_animations.py` → `assets/characters/test/{Idle,Blink,Walk}/` (свой материал, ADR-004 не задет).
+- Состояния/маппинг: `character/states.py` (`STATE_CLIP_PREFIX`, `STATE_PRIORITY`, `TRANSIENT_STATES`).
+- Конфиг: `config/behavior.toml` + `character/config.py::load_behavior_config` (битые значения → дефолт + лог); **путь передаёт `start_behavior`** (`DEFAULT_CONFIG_PATH`) — вызов без пути возвращает только дефолты (баг, исправлен 2026-10-08).
+- FSM: `character/fsm.py` (`BehaviorFSM`, `is_night`); выбор — `rng.choices` по весам, ночью вес SLEEP ×(ночной бонус).
+- Контроллер: `character/controller.py` (`CharacterController`, `EdgeWalker`); 2 QTimer (состояние + шаг ходьбы).
+- Шина/события: `common/event_bus.py`, `common/events.py`; клик/драг порог 5 px — `desktop/window.py` (`DRAG_THRESHOLD_PX`).
+- Сборка: `desktop/main.py::start_behavior/start_demo_events/states_with_clips`.
+- Плеер (правки PHASE 3): `restart=True` — немедленная замена клипа; `_start_next` не перетирает клип, запущенный слушателем `animation_finished`.
+- Демо-ассеты: `scripts/make_test_animations.py` → `assets/characters/test/` — **7 клипов** (Idle/Blink/Walk/Sleep/Sit/Coffee/Thinking, свой материал).
 
 ## Последняя завершённая задача
 
-PHASE 2 (Animation Engine): пакет `animation/` — парсер кадров `_NNN_DDD.png` (ADR-005), LRU-кэш 64 МБ, приоритетная очередь (idle<behavior<event<reaction), плеер с таймингами из имён файлов; интеграция в `PetWindow` (показ кадров, автоподстройка размера), флаг `--demo`; 77 тестов, ruff чисто; сценарии P2 подтверждены пользователем.
+Шаг 10 PHASE 3 — ручные сценарии **P3-1…P3-7 все OK (2026-10-08, TESTING.md)** + исправлен баг загрузки `config/behavior.toml` (вызов `load_behavior_config()` без пути → файл в приложении не читался) с регресс-тестом; **167 passed / ruff чисто**.
 
-## Что реализовано
+## Что реализовано (PHASE 3, доп. к PHASE 0–2)
 
-- `src/microchel/common/logging_config.py` — логирование (MICROCHEL_LOG_LEVEL).
-- `src/microchel/desktop/geometry.py` — чистые `clamp_axis`/`clamp_to_screen`.
-- `src/microchel/desktop/window.py` — `PetWindow`: frameless + WA_TranslucentBackground + WindowStaysOnTopHint, отрисовка спрайта, drag, `move_clamped`, меню «Выход».
-- `src/microchel/desktop/main.py` — точка входа `python -m microchel.desktop.main`.
-- `scripts/make_test_sprite.py` → `assets/characters/test/test_idle.png` (160×160 RGBA, свой материал).
-- Тесты: `tests/unit/test_geometry.py`, `tests/integration/test_window.py`, `tests/unit/test_smoke.py`.
+- `src/microchel/common/events.py`, `src/microchel/common/event_bus.py` — типы событий и синхронная шина.
+- `src/microchel/character/` — `states.py`, `config.py`, `fsm.py`, `controller.py`; `config/behavior.toml`.
+- `desktop/window.py` — клик/драг → `UserEvent` в шину (порог 5 px), `move_by(dx)` для ходьбы.
+- `desktop/main.py` — сборка controller, флаги `--demo` (взаимоисключен с FSM) и `--demo-events` (45–90 с).
+- Тесты: `tests/unit/test_{events,states,behavior_config,fsm,controller}.py`, `tests/integration/test_{character_controller,start_behavior,demo_events}.py` + расширены `test_player/test_window/test_main`.
 
 ## Что работает / что проверено
 
 | Проверка | Результат |
 |---|---|
-| ОС / Python / Git | Ubuntu 26.04.1 x86-64, Python 3.14.4, Git 2.53.0 |
-| Сессия | **Wayland** (XDG_SESSION_TYPE=wayland), XWayland :0 доступен |
-| `.venv` | PySide6 **6.12.0 / Qt 6.12.0**, pytest 9.1.1, pytest-qt 4.5.0, ruff 0.16.10 |
-| `pytest` | **77 passed** |
+| `pytest` | **167 passed** (вкл. регресс-тест загрузки конфига) |
 | `ruff check .` | **All checks passed** |
-| Спрайт | PNG 160×160 RGBA сгенерирован |
-| Нативный запуск | wayland: драг невозможен → **xcb: всё OK** (авто-выбор в main.py) |
-| Ручные сценарии 1–6 | **все OK 2026-10-08** |
-| Мультимонитор (3 экрана) | **OK** — драг между мониторами, зажим в общий bbox |
+| Генерация ассетов | 7 клипов загружаются (`discover_clip_dirs`) |
+| Smoke offscreen 20 с | старт без ошибок, «Поведение подключено», все 6 состояний |
+| Smoke offscreen 90 с | переходы `idle → walk → idle` в логе, клипы Idle→Walk→Idle, 0 ошибок |
+| Ручные сценарии P3-1…P3-7 | **все OK 2026-10-08** (TESTING.md: ≥10 мин, разворот у края, RSS, ночь, события) |
+| Загрузка `behavior.toml` | фикс 2026-10-08: `start_behavior` → `load_behavior_config(DEFAULT_CONFIG_PATH)`; до фикса файл не читался в приложении |
+| `--demo-events` живой | 13+ событий, интервалы 47–89 с (в границах 45–90) |
 
 ## Что сломано / что не проверено
 
-- Под нативным wayland драг невозможен в принципе (ADR-002) — обход через авто-xcb (проверено).
-- Не проверено: X11-сессия (RPi), поведение при обновлении Qt/Ubuntu (XWayland).
+- **Визуальная верификация скриншотами невозможна** на dev-стенде: grim/scrot отсутствуют, ffmpeg x11grab под Wayland даёт чёрный кадр — проверка глазами пользователя (зафиксировано в TESTING.md).
+- Замечание о плавности движения → PHASE 4; «blink поверх сна» (стоячая поза выглядит как резкое пробуждение) → PHASE 4 (TESTING.md, Известные ошибки №3).
+- Ubuntu X11 и RPi — не проверялись (нет сред).
 
 ## Известные ограничения и риски
 
-1. **Wayland закрыт через xcb** (ADR-002, уточнён): авто-выбор в `main.py`, нужен `libxcb-cursor0`. Остаточный риск: XWayland — медленно развивающийся путь; перепроверить при обновлениях Qt/Ubuntu.
-2. **Raspberry Pi не пришла** — бюджеты памяти (4 GB) держим в голове, профилирование с PHASE 2.
-3. Лицензия собственного кода — **MIT** (LICENSE создан 2026-10-08, по выбору пользователя).
-4. Анимации VPet — не-коммерческие условия (RESEARCH_VPET.md).
+1–4 — как в PHASE 2 (Wayland/xcb, RPi, MIT, лицензии VPet) + замечание о плавности движения → PHASE 4.
+5. **Приоритет REACTION vs событие во время клика:** `SystemEvent` во время играющей реакции уходит в no-op (blink уже играет) — визуально корректно, задокументировано в `controller._on_system_event`.
 
 ## Следующее конкретное действие
 
-**PHASE 2 закрыт (коммит `3051dac`).** Дальше по очереди:
-1. Спросить команду на **PHASE 3 (Character Behavior)**: FSM idle/walk/sleep/sit/coffee/thinking, события пользователя/системы, автономный выбор (критерий ≥10 мин естественного поведения).
-2. Опционально: взять замечание по плавности движения (TESTING «Известные ошибки» №1) сейчас или оставить до PHASE 4.
+**Коммит PHASE 3** (шаг 11) — по команде пользователя: код + фикс загрузки конфига + тесты (167) + документация.
 
 ## Команды для запуска и тестирования
 
 ```bash
 cd /home/fake-cat/projects/microchel
 source .venv/bin/activate
-pytest                                  # 77 passed
+pytest                                  # 167 passed
 ruff check .                            # чисто
-python -m microchel.desktop.main        # запуск питомца (под Wayland сам выберет xcb)
-QT_QPA_PLATFORM=offscreen python scripts/make_test_sprite.py   # перегенерация спрайта
+python -m microchel.desktop.main        # автономное поведение (под Wayland сам выберет xcb)
+python -m microchel.desktop.main --demo # PHASE 2 демо (FSM отключён)
+python -m microchel.desktop.main --demo-events  # + синтетические события 45–90 с
+python -m microchel.desktop.main --showcase     # все клипы по 10 с подряд (ручной показ)
+QT_QPA_PLATFORM=offscreen python scripts/make_test_animations.py   # перегенерация клипов
 ```
 
 ## Блокирующие проблемы
 
-Нет. Ожидается результат ручной проверки окна.
+Нет.

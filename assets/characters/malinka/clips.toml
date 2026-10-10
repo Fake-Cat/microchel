@@ -1,94 +1,134 @@
 # clips.toml — playback-спека клипов малинки.
 # Генерируется scripts/slice_sheets.py; индексы кадров 0-based, включительно.
-#   loop = [a, b]  — повторяемый сегмент (без него — весь клип / once)
+#   sheet_cells    — позиция кадра → исходная ячейка шита (row-major)
+#   missing_cells  — пустые ячейки шита (кадры пропущены, нумерация не сжата)
+#   loop = [a, b]  — повторяемый сегмент (позиции записанных кадров)
 #   once = true    — один проход и завершение
 #   prefix_once    — кадры до loop сыграть один раз перед циклом
 #   suffix_on_exit — после loop доиграть хвост при выходе из состояния
 #   repeat_fill_ms — «несколько раз»: число повторов ~ заполнить цель (случайно)
 #   mirror = left  — loop-сегмент зеркалится (спрайт идёт влево)
 #   motion         — walk / traverse — движение окна во время клипа
-#   scale          — рантайм-масштаб (1.0 — без изменений)
+#   scale          — рантайм-масштаб (авто: эталон/медиана высот; ручной перезаписывает)
 
 [clips."Angry/Normal"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [4, 10]
 repeat_fill_ms = 4000
+scale = 1.157
 
 [clips."Coffee/Normal"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [1, 9]
+scale = 0.923
 
 [clips."Dance/Normal"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [2, 10]
+scale = 0.962
 
 [clips."Error/Panic"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
+scale = 1.070
 
 [clips."Happy/Success"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
+scale = 1.080
 
 [clips."Hide/Out"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
 
 [clips."Idle/Normal"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
+scale = 0.927
 
 [clips."Lie/Dormant"]
 frames = 10
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 once = true
+scale = 1.078
 
 [clips."Move/Transition"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
+scale = 1.477
 
 [clips."Sit/Happily"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [3, 11]
+scale = 1.131
 
 [clips."Sleep/Wake"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [4, 9]
 suffix_on_exit = true
+scale = 1.517
 
 [clips."Talk/Normal"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [0, 11]
+scale = 1.168
 
 [clips."Thinking/Normal"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
+scale = 1.190
 
 [clips."Sit/Typing"]
-frames = 12
-loop = [1, 10]
+frames = 11
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+missing_cells = [11]
+loop = [6, 9]
 
 [clips."Walk/Back"]
-frames = 12
+frames = 11
+sheet_cells = [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11]
+missing_cells = [6]
 loop = [6, 10]
 motion = "walk"
+scale = 1.255
 
 [clips."Walk/Direct"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [2, 10]
 mirror = "left"
 motion = "walk"
+scale = 1.165
 
 [clips."Walk/Right"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [2, 10]
 motion = "walk"
-# спрайт мельче остальных (h≈330) — scale подбирается визуально
+scale = 1.396
+# спрайт мельче остальных (h≈333) — нормализуется авто-scale
 
 [clips."Walk/Left"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [2, 10]
 motion = "walk"
+scale = 1.396
 
 [clips."Welcome/Greeting"]
 frames = 12
+sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
+scale = 1.218

@@ -49,11 +49,17 @@ def test_empty_env_keeps_default() -> None:
 def test_parse_args_flags() -> None:
     args = parse_args([])
     assert args.demo is False
-    assert args.showcase is False
+    assert args.showcase is None  # без флага показ не включается
     assert args.demo_events is False
     args = parse_args(["--demo", "--demo-events"])
     assert args.demo is True
     assert args.demo_events is True
+
+
+def test_parse_args_frame_stats() -> None:
+    """--show-frame-stats: анализатор модели выключен по умолчанию."""
+    assert parse_args([]).show_frame_stats is False
+    assert parse_args(["--show-frame-stats"]).show_frame_stats is True
 
 
 def test_states_with_clips_keeps_states_with_prefixes() -> None:
@@ -94,6 +100,12 @@ def test_parse_args_showcase_flag() -> None:
     assert args.demo is False
 
 
+def test_parse_args_showcase_with_name() -> None:
+    """ "--showcase dance" — только клипы по подстроке (case-insensitive)."""
+    assert parse_args(["--showcase", "dance"]).showcase == "dance"
+    assert parse_args(["--showcase", "--showcase-interval", "2"]).showcase is True
+
+
 def test_parse_args_demo_and_showcase_mutually_exclusive() -> None:
     with pytest.raises(SystemExit):
         parse_args(["--demo", "--showcase"])
@@ -115,6 +127,7 @@ class FakeShowcaseWindow(QObject):
         self.durations = durations
         self.calls: list[dict[str, object]] = []
         self.moves: list[int] = []
+        self.transition_calls: list[bool] = []
 
     def available_clip_names(self) -> list[str]:
         return list(self._names)
@@ -131,6 +144,9 @@ class FakeShowcaseWindow(QObject):
     def move_by(self, dx: int) -> bool:
         self.moves.append(dx)
         return True
+
+    def set_transition_enabled(self, enabled: bool) -> None:
+        self.transition_calls.append(bool(enabled))
 
 
 def test_start_showcase_plays_all_clips_in_order(qtbot: QtBot) -> None:
@@ -163,6 +179,38 @@ def test_start_showcase_without_clips_timer_inactive() -> None:
     window = FakeShowcaseWindow([])
     timer = start_showcase(window)
     assert not timer.isActive()
+
+
+def test_start_showcase_disables_transition() -> None:
+    """Переход (MOVED CLIP) отключён: Move/Transition — обычный слот цикла."""
+    window = FakeShowcaseWindow()
+
+    timer = start_showcase(window, pause_s=0.05)
+    assert window.transition_calls == [False]
+    timer.stop()
+
+
+def test_start_showcase_only_filter_plays_matching_clips(qtbot: QtBot) -> None:
+    """only="walk" — играют только клипы с подстрокой в имени (без учёта регистра)."""
+    window = FakeShowcaseWindow(["Walk/Right", "Walk/Left", "Talk/Normal"])
+
+    timer = start_showcase(window, pause_s=0.05, only="WALK")
+    qtbot.waitUntil(lambda: len(window.calls) >= 2, timeout=3000)
+    timer.stop()
+    names = {call["name"] for call in window.calls}
+    assert names == {"Walk/Right", "Walk/Left"}
+
+
+def test_start_showcase_only_no_match_disables_showcase(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Нет клипов по маске — показ отключён с предупреждением, без запуска."""
+    window = FakeShowcaseWindow(["Walk/Right"])
+    with caplog.at_level(logging.WARNING, logger="microchel.desktop.main"):
+        timer = start_showcase(window, only="dance")
+    assert window.calls == []
+    assert not timer.isActive()
+    assert any("dance" in record.getMessage() for record in caplog.records)
 
 
 def test_start_showcase_plays_full_cycle_segment() -> None:

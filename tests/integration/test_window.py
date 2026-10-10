@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QImage, QMouseEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt
+from PySide6.QtGui import QColor, QImage, QImageReader, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
@@ -14,7 +15,7 @@ from microchel.animation.queue import Priority
 from microchel.common.event_bus import EventBus
 from microchel.common.events import UserEvent, UserEventKind
 from microchel.desktop.geometry import desktop_area
-from microchel.desktop.window import PetWindow
+from microchel.desktop.window import PetWindow, _alpha_bbox
 
 
 @pytest.fixture
@@ -378,18 +379,32 @@ class TestScaleFadeSpeed:
         assert pet_window.pet_scale == pytest.approx(0.65)
         assert pet_window.animation_speed == 1.0
 
-    def test_set_pet_scale_resizes_window(self, qtbot: QtBot) -> None:
+    def test_set_pet_scale_resizes_window_to_footprint(self, qtbot: QtBot) -> None:
+        """Окно = фиксированный холст × pet-scale (не «кадр × масштаб клипа»)."""
         window = PetWindow()
         qtbot.addWidget(window)
         assert window.setup_animation() is True
-        frame = window._current_frame
-        assert frame is not None
 
         window.set_pet_scale(0.5)
 
         assert window.pet_scale == pytest.approx(0.5)
-        assert window.width() == max(1, int(round(frame.width() * 0.5)))
-        assert window.height() == max(1, int(round(frame.height() * 0.5)))
+        footprint = window._footprint
+        assert window.width() == max(1, int(round(footprint.width() * 0.5)))
+        assert window.height() == max(1, int(round(footprint.height() * 0.5)))
+
+    def test_set_pet_scale_keeps_bottom_center(self, qtbot: QtBot) -> None:
+        """Смена масштаба держит низ-центр окна — ноги персонажа на месте."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+        window.move_clamped(QPoint(40, 40))
+        before = window.geometry()
+
+        window.set_pet_scale(0.5)
+
+        after = window.geometry()
+        assert after.bottom() == before.bottom()
+        assert after.center().x() == before.center().x()
 
     def test_invalid_pet_scale_rejected(self, pet_window: PetWindow) -> None:
         pet_window.set_pet_scale(0)
@@ -427,3 +442,215 @@ class TestScaleFadeSpeed:
     def test_invalid_animation_speed_rejected(self, pet_window: PetWindow) -> None:
         pet_window.set_animation_speed(-1)
         assert pet_window.animation_speed == 1.0  # дефолт не тронут
+
+
+class TestClipScale:
+    """Нормализация размера: масштаб клипа из clips.toml применяется в окне."""
+
+    def test_clip_scale_applies_idle_spec_on_setup(self, qtbot: QtBot) -> None:
+        """setup_animation: clip_scale = scale idle-клипа из playback-спеки."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+
+        idle = next(name for name in window.available_clip_names() if "idle" in name.casefold())
+        spec_scale = window.clip_specs[idle].scale
+        assert window.clip_scale == pytest.approx(spec_scale if spec_scale is not None else 1.0)
+
+    def test_clip_scale_applies_on_animation_started_without_resize(self, qtbot: QtBot) -> None:
+        """Смена клипа: масштаб применяется сразу, размер окна не меняется.
+
+        Холст фиксирован под максимальный кадр всех клипов — окно больше не
+        дёргается ни при смене клипа, ни при смене кадра (дрожание, FR-P2.6).
+        """
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+        window.set_pet_scale(0.5)
+        before = (window.width(), window.height())
+
+        spec_scale = window.clip_specs["Walk/Right"].scale
+        assert spec_scale is not None
+        window.player.animation_started.emit("Walk/Right")
+
+        assert window.clip_scale == pytest.approx(spec_scale)
+        assert (window.width(), window.height()) == before
+
+        # кадр другой геометрии — окно всё равно не меняется
+        window._on_frame_changed(QPixmap(200, 120))
+        assert (window.width(), window.height()) == before
+
+    def test_frame_change_only_updates_without_resize(self, qtbot: QtBot) -> None:
+        """Смена кадра: только update() — без resize() и repaint()."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+        current = window._current_frame
+        assert current is not None
+
+        with (
+            patch.object(window, "repaint") as repaint,
+            patch.object(window, "resize") as resize,
+            patch.object(window, "update") as update,
+        ):
+            window._on_frame_changed(current)
+            window._on_frame_changed(QPixmap(180, 240))
+
+        repaint.assert_not_called()
+        resize.assert_not_called()
+        assert update.call_count == 2
+
+    def test_clip_scale_strips_plan_suffix(self, qtbot: QtBot) -> None:
+        """Имя клипа с #plan-суффиксом находит ту же спеку масштаба."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+
+        window.player.animation_started.emit("Walk/Right#12-24")
+
+        assert window.clip_scale == pytest.approx(window.clip_specs["Walk/Right"].scale or 1.0)
+
+    def test_unknown_clip_resets_scale_to_one(self, qtbot: QtBot) -> None:
+        """Клип без спеки — масштаб нормализации снимается (1.0)."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+        window.player.animation_started.emit("Walk/Right")
+        assert window.clip_scale != 1.0
+
+        window.player.animation_started.emit("Unknown/Clip")
+
+        assert window.clip_scale == 1.0
+
+    def test_scaled_size_factor(self, qtbot: QtBot) -> None:
+        """Размер отрисовки = кадр × pet-scale × clip-scale (минимум 1 px)."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+        window.set_pet_scale(0.5)
+        window.player.animation_started.emit("Walk/Right")
+
+        assert window._scaled_size(QSize(200, 120)) == QSize(
+            max(1, int(round(200 * 0.5 * window.clip_scale))),
+            max(1, int(round(120 * 0.5 * window.clip_scale))),
+        )
+
+
+class TestFixedCanvas:
+    """Фиксированный холст: окно не дёргается, кадр якорится низ-центром (FR-P2.6)."""
+
+    def test_window_fits_draw_size_of_every_clip(self, qtbot: QtBot) -> None:
+        """Окно вмещает каждый кадр любого клипа с его масштабом — без обрезки."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+        assert window._clips
+
+        for name, clip in window._clips.items():
+            spec = window.clip_specs.get(name)
+            scale = spec.scale if spec is not None and spec.scale is not None else 1.0
+            for frame in clip.frames:
+                size = QImageReader(str(frame.path)).size()
+                factor = window.pet_scale * scale
+                assert window.width() >= max(1, int(round(size.width() * factor))), name
+                assert window.height() >= max(1, int(round(size.height() * factor))), name
+
+    def test_paint_anchors_frame_bottom_center(self, qtbot: QtBot) -> None:
+        """Кадр рисуется снизу-по-центру: над кадром фон остаётся прозрачным."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+        window.set_pet_scale(1.0)
+        window.player.animation_started.emit("Unknown/Clip")  # clip_scale = 1.0
+        solid = QPixmap(64, 64)
+        solid.fill(Qt.GlobalColor.red)
+        window._on_frame_changed(solid)
+
+        image = window.grab().toImage()
+        center_x = image.width() // 2
+        # низ-центр: кадр прижат к нижнему краю, по горизонтали по центру
+        assert image.pixelColor(center_x, image.height() - 1).alpha() > 0
+        assert image.pixelColor(center_x, image.height() - 64).alpha() > 0  # верх кадра
+        assert image.pixelColor(center_x, image.height() - 65).alpha() == 0  # над кадром пусто
+        assert image.pixelColor(0, image.height() - 1).alpha() == 0  # слева от кадра пусто
+        assert image.pixelColor(0, 0).alpha() == 0
+
+
+class TestTransitionEnabled:
+    """Переходный клип (MOVED CLIP): showcase отключает вставку при смене клипов."""
+
+    def test_setup_animation_installs_transition(self, qtbot: QtBot) -> None:
+        """По умолчанию смена анимации начинается с Move/Transition."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+
+        assert window.player is not None
+        assert window.player.transition is not None
+        assert window.player.transition.name == "Move/Transition"
+
+    def test_disable_transition_clears_player(self, qtbot: QtBot) -> None:
+        """set_transition_enabled(False) снимает переход с текущего плеера."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+
+        window.set_transition_enabled(False)
+
+        assert window.player is not None
+        assert window.player.transition is None
+
+    def test_transition_disabled_survives_setup(self, qtbot: QtBot) -> None:
+        """Смена персонажа (setup_animation) не возвращает выключенный переход."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        window.set_transition_enabled(False)
+
+        assert window.setup_animation() is True
+
+        assert window.player is not None
+        assert window.player.transition is None
+
+    def test_enable_transition_restores_player(self, qtbot: QtBot) -> None:
+        """Повторное включение возвращает переход текущему плееру."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+        window.set_transition_enabled(False)
+
+        window.set_transition_enabled(True)
+
+        assert window.player is not None
+        assert window.player.transition is not None
+        assert window.player.transition.name == "Move/Transition"
+
+
+class TestFrameStats:
+    """Анализатор модели: bbox и оверлей размеров (--show-frame-stats)."""
+
+    def test_alpha_bbox_finds_model(self) -> None:
+        """bbox находит прямоугольник непрозрачных пикселей."""
+        img = QImage(10, 8, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        for x in range(2, 6):
+            for y in range(3, 7):
+                img.setPixelColor(x, y, QColor(255, 0, 0, 255))
+        assert _alpha_bbox(img) == QRect(2, 3, 4, 4)
+
+    def test_alpha_bbox_fully_transparent(self) -> None:
+        """Пустая модель — null-прямоугольник."""
+        img = QImage(6, 6, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        assert _alpha_bbox(img).isNull()
+
+    def test_overlay_tracks_model_bbox(self, qtbot: QtBot) -> None:
+        """Оверлей считает bbox модели текущего кадра и рисует его без ошибок."""
+        window = PetWindow(frame_stats=True)
+        qtbot.addWidget(window)
+        assert window.setup_animation()
+        clip = next(iter(window._clips.values()))
+        pixmap = window.player.cache.load(clip.frames[0].path)
+        window._on_frame_changed(pixmap)
+        window.grab()  # форсирует paintEvent с оверлеем
+        assert window._stats_bbox is not None
+        assert window._stats_bbox == _alpha_bbox(pixmap.toImage())

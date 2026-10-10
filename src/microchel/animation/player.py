@@ -108,6 +108,11 @@ class AnimationPlayer(QObject):
     def pending(self) -> AnimationRequest | None:
         return self._pending
 
+    @property
+    def transition(self) -> AnimationClip | None:
+        """Установленный переходный клип (MOVED CLIP; None — переход отключён)."""
+        return self._transition_clip
+
     def set_idle(self, clip: AnimationClip | None) -> None:
         """Клип, к которому возвращаемся после однократных анимаций (FR-P2.5)."""
         self._idle_clip = clip

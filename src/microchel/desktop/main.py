@@ -76,6 +76,7 @@ def start_showcase(
     walk_step_px: int = 3,
     walk_interval_ms: int = 60,
     rng: random.Random | None = None,
+    only: str | None = None,
 ) -> QTimer:
     """Показать все анимации по очереди — полный цикл каждой (PHASE 4).
 
@@ -85,10 +86,14 @@ def start_showcase(
     Idle-клипы не показываются отдельными слотами (играют фоном).
     motion=walk — шаги EdgeWalker с разворотом у края, motion=traverse — шаги
     до края без разворота (допущение — спека FSM ещё не утверждена).
+    only — подстрока-фильтр имён (без учёта регистра): показываются только
+    клипы, содержащие её; нет совпадений — показ отключается с предупреждением.
     Список клипов и спека перечитываются на каждом слоте — персонажа можно
     менять через меню прямо во время показа. Окно при этом FSM отключён,
-    показываются только анимации.
+    показываются только анимации. Переходный клип (MOVED CLIP) отключён:
+    Move/Transition играет отдельным слотом цикла, а не перед каждым клипом.
     """
+    window.set_transition_enabled(False)
     index = 0
     walker: EdgeWalker | None = None
     traverse_dx = 0  # шаг traverse; 0 — motion не активен
@@ -114,6 +119,9 @@ def start_showcase(
         clips = sorted(
             name for name in window.available_clip_names() if not name.casefold().startswith("idle")
         )
+        if only is not None:
+            needle = only.casefold()
+            clips = [name for name in clips if needle in name.casefold()]
         if not clips:
             motion_timer.stop()
             return
@@ -176,6 +184,11 @@ def start_showcase(
     timer.timeout.connect(next_clip)
     if not window.available_clip_names():
         logger.warning("showcase: клипы не найдены, показ отключён")
+        return timer
+    if only is not None and not any(
+        only.casefold() in name.casefold() for name in window.available_clip_names()
+    ):
+        logger.warning("showcase: нет клипов по маске %r — показ отключён", only)
         return timer
     next_clip()
     return timer
@@ -276,8 +289,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     demo_group.add_argument(
         "--showcase",
-        action="store_true",
-        help="показать все анимации по очереди — полный цикл каждой (idle не показывается)",
+        nargs="?",
+        const=True,
+        default=None,
+        metavar="NAME",
+        help=(
+            "показать все анимации по очереди — полный цикл каждой (idle не "
+            "показывается); со значением NAME — только клипы, содержащие подстроку"
+        ),
     )
     parser.add_argument(
         "--showcase-interval",
@@ -301,6 +320,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"масштаб персонажа на экране (по умолчанию {DEFAULT_PET_SCALE}; 1 — натуральный)",
     )
     parser.add_argument(
+        "--show-frame-stats",
+        action="store_true",
+        help="анализатор модели: на каждом кадре показывать bbox модели, границы кадра и масштабы",
+    )
+    parser.add_argument(
         "--demo-events",
         action="store_true",
         help="синтетические системные события каждые 45–90 с (проверка механики FR-P3.6)",
@@ -322,16 +346,16 @@ def main(argv: list[str] | None = None) -> int:
     platform_choice = select_qt_platform()
     if platform_choice:
         os.environ["QT_QPA_PLATFORM"] = platform_choice
-        logger.info(
-            "Wayland-сессия: запуск через XWayland (xcb) — драг и always-on-top, ADR-002"
-        )
+        logger.info("Wayland-сессия: запуск через XWayland (xcb) — драг и always-on-top, ADR-002")
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName("microchel")
     logger.info("Qt platform: %s", app.platformName())
 
     bus = EventBus()
-    window = PetWindow(bus=bus)
+    window = PetWindow(bus=bus, frame_stats=args.show_frame_stats)
+    if args.show_frame_stats:
+        logger.info("Анализатор модели включён (--show-frame-stats)")
     has_animation = window.setup_animation()
     window.set_pet_scale(args.pet_scale)
     window.set_animation_speed(args.speed)
@@ -340,11 +364,13 @@ def main(argv: list[str] | None = None) -> int:
 
     # контроллер и таймер событий держатся локальными ссылками до конца app.exec()
     controller: CharacterController | None = None
-    if args.showcase:
+    if args.showcase is not None:
         if has_animation:
-            start_showcase(window, pause_s=args.showcase_interval, speed=args.speed)
+            only = args.showcase if isinstance(args.showcase, str) else None
+            start_showcase(window, pause_s=args.showcase_interval, speed=args.speed, only=only)
             logger.info(
-                "Showcase: полный цикл каждой анимации, пауза %s с; поведение отключено",
+                "Showcase: %s, пауза %s с; поведение отключено",
+                f"клипы по маске {only!r}" if only else "полный цикл каждой анимации",
                 args.showcase_interval,
             )
         else:
@@ -352,9 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.demo:
         if has_animation:
             start_demo(window)
-            logger.info(
-                "Демо-режим анимаций включён (каждые 4 с); поведение отключено (FR-P3.8)"
-            )
+            logger.info("Демо-режим анимаций включён (каждые 4 с); поведение отключено (FR-P3.8)")
         else:
             logger.warning("--demo: анимации не подключены, демо отключено")
     elif has_animation:

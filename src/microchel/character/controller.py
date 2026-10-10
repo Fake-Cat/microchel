@@ -29,11 +29,13 @@ MoveFn = Callable[[int], bool]
 class EdgeWalker:
     """Шаг ходьбы с разворотом у края (FR-P3.4): сдвиг не удался → меняем направление."""
 
-    def __init__(self, step_px: int) -> None:
+    def __init__(self, step_px: int, direction: int = 1) -> None:
         if step_px < 1:
             raise ValueError(f"step_px должен быть >= 1: {step_px}")
+        if direction not in (-1, 1):
+            raise ValueError(f"direction должен быть 1 или -1: {direction}")
         self._step_px = step_px
-        self._direction = 1
+        self._direction = direction
 
     @property
     def direction(self) -> int:

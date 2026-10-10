@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QPixmap, QTransform
 
 from microchel.animation.cache import FrameCache
 from microchel.animation.frames import AnimationClip
@@ -57,6 +57,15 @@ class AnimationPlayer(QObject):
         self._idle_clip: AnimationClip | None = None
         self._pending: AnimationRequest | None = None  # ждёт границы кадра
         self._frame_pixmap: QPixmap | None = None
+        # зеркальные кэпы по пути кадра (mirror="left"): флип дёшев, но на 12 fps
+        # и кэше LRU дорог — держим отдельный небольшой словарь
+        self._mirror_cache: dict[Path, QPixmap] = {}
+        # Переходный клип (MOVED CLIP, PHASE 4): каждая смена анимации начинается
+        # с него — цель запоминается в _after_transition и стартует после перехода
+        self._transition_clip: AnimationClip | None = None
+        self._after_transition: AnimationRequest | None = None
+        self._in_transition = False  # сейчас играет переходный клип
+        self._last_name: str | None = None  # имя последнего реально запущенного клипа
 
     # --- состояние -------------------------------------------------------
 
@@ -77,6 +86,16 @@ class AnimationPlayer(QObject):
         return self._clip is not None and self._timer.isActive()
 
     @property
+    def is_mirrored(self) -> bool:
+        """Текущий запрос играется зеркально (спека mirror = "left")."""
+        return self._request.mirror if self._request is not None else False
+
+    @property
+    def speed(self) -> float:
+        """Текущая скорость (1.0 — норма; 2.0 — вдвое быстрее, 0.5 — медленнее)."""
+        return self._request.speed if self._request is not None else 1.0
+
+    @property
     def frame_pixmap(self) -> QPixmap | None:
         """Текущий показанный кадр (для отрисовки окном)."""
         return self._frame_pixmap
@@ -93,6 +112,15 @@ class AnimationPlayer(QObject):
         """Клип, к которому возвращаемся после однократных анимаций (FR-P2.5)."""
         self._idle_clip = clip
 
+    def set_transition(self, clip: AnimationClip | None) -> None:
+        """Переходный клип: каждая смена анимации начинается с него (MOVED CLIP).
+
+        Первый старт после set_transition/stop играется без перехода; переход
+        не эмитит animation_finished (иначе controller принял бы его за конец
+        реакции и перезапустил бы клип состояния поверх цели).
+        """
+        self._transition_clip = clip
+
     # --- управление ------------------------------------------------------
 
     def play(
@@ -102,6 +130,8 @@ class AnimationPlayer(QObject):
         priority: Priority = Priority.IDLE,
         loop: bool | int = True,
         restart: bool = False,
+        mirror: bool = False,
+        speed: float = 1.0,
     ) -> None:
         """Запросить анимацию (FR-P2.3, FR-P2.4, FR-P2.5).
 
@@ -111,12 +141,22 @@ class AnimationPlayer(QObject):
         - Равный/ниже приоритет — в очередь FIFO.
         - restart=True — немедленная замена текущего запроса (другой клип тоже);
           так FSM меняет looping-состояния без застревания в очереди (PHASE 3).
+        - mirror=True — кадры показываются зеркально по X (спека mirror="left", PHASE 4).
+        - speed — множитель скорости: длительность кадра делится на speed
+          (2.0 — вдвое быстрее, 0.5 — вдвое медленнее; PHASE 4, --speed).
         """
-        request = AnimationRequest(clip=clip, priority=priority, loop=loop, restart=restart)
+        request = AnimationRequest(
+            clip=clip,
+            priority=priority,
+            loop=loop,
+            restart=restart,
+            mirror=mirror,
+            speed=max(0.01, float(speed)),
+        )
         if self._clip is None or self._request is None:
             self._start(request)
             return
-        same_clip = clip.name == self._request.clip.name
+        same_clip = clip.name == self._request.clip.name and mirror == self._request.mirror
         if same_clip and not restart and priority <= self._request.priority:
             return  # уже играет — не перезапускаем (FR-P2.4)
         if restart:
@@ -134,10 +174,40 @@ class AnimationPlayer(QObject):
         self._request = None
         self._pending = None
         self._queue.clear()
+        self._after_transition = None
+        self._in_transition = False
+        self._last_name = None
 
     # --- внутренняя механика ---------------------------------------------
 
     def _start(self, request: AnimationRequest) -> None:
+        """Запустить запрос; при смене анимации — сначала переходный клип."""
+        self._after_transition = None  # новая цель по умолчанию
+        if (
+            self._transition_clip is not None
+            and not self._in_transition
+            # переход только при смене: первый старт (_last_name is None) — без него
+            and self._last_name is not None
+            and request.clip.name != self._last_name
+            and request.clip.name != self._transition_clip.name
+        ):
+            # смена анимации: играем переход, цель — после его завершения
+            self._after_transition = request
+            logger.debug(
+                "Смена анимации: сначала переход %s, затем %s",
+                self._transition_clip.name,
+                request.clip.name,
+            )
+            request = AnimationRequest(
+                clip=self._transition_clip,
+                priority=request.priority,
+                loop=False,
+                restart=True,
+                speed=request.speed,
+            )
+        self._start_unchecked(request)
+
+    def _start_unchecked(self, request: AnimationRequest) -> None:
         self._timer.stop()
         self._clip = request.clip
         self._request = request
@@ -156,24 +226,41 @@ class AnimationPlayer(QObject):
         self.animation_started.emit(request.clip.name)
         self._show_current()
         self._schedule()
+        transition = self._transition_clip
+        self._in_transition = transition is not None and request.clip.name == transition.name
+        self._last_name = request.clip.name
 
     def _show_current(self) -> None:
         if self._clip is None:
             return
         frame = self._clip.frames[self._cursor]
         try:
-            self._frame_pixmap = self._cache.load(frame.path)
+            pixmap = self._cache.load(frame.path)
         except ValueError:
             logger.error("Кадр не загрузился, останов: %s", frame.path)
             self.stop()
             return
-        self.frame_changed.emit(self._frame_pixmap)
+        if self._request is not None and self._request.mirror:
+            pixmap = self._mirrored(frame.path, pixmap)
+        self._frame_pixmap = pixmap
+        self.frame_changed.emit(pixmap)
+
+    def _mirrored(self, path: Path, pixmap: QPixmap) -> QPixmap:
+        """Зеркальный кадр (по X) с точным пикселем — FastTransformation."""
+        cached = self._mirror_cache.get(path)
+        if cached is None:
+            cached = pixmap.transformed(
+                QTransform().scale(-1, 1), Qt.TransformationMode.FastTransformation
+            )
+            self._mirror_cache[path] = cached
+        return cached
 
     def _schedule(self) -> None:
         if self._clip is None:
             return
         duration = self._clip.frames[self._cursor].duration_ms
-        self._timer.start(max(1, duration))
+        speed = self.speed
+        self._timer.start(max(1, int(round(duration / speed))))
 
     def _advance(self) -> None:
         """Таймер кончился: прерывание → следующий кадр → повтор → завершение."""
@@ -203,6 +290,17 @@ class AnimationPlayer(QObject):
         self._clip = None
         self._request = None
         self._loop_left = None
+        transition = self._transition_clip
+        if (
+            transition is not None
+            and self._after_transition is not None
+            and finished_name == transition.name
+        ):
+            # переход отыгран — запускаем запомненную цель (без animation_finished,
+            # иначе controller принял бы конец перехода за конец реакции)
+            target, self._after_transition = self._after_transition, None
+            self._start(target)
+            return
         self.animation_finished.emit(finished_name)
         self._start_next()
 

@@ -7,31 +7,34 @@ PHASE 2: подключает AnimationPlayer — показывает теку�
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtGui import QContextMenuEvent, QMouseEvent, QPainter, QPaintEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from microchel.animation.frames import AnimationClip, ClipLoadError, discover_clip_dirs, load_clip
 from microchel.animation.player import AnimationPlayer
 from microchel.animation.queue import Priority
+from microchel.animation.spec import ClipSpec, load_clip_specs
 from microchel.common.event_bus import EventBus
 from microchel.common.events import UserEvent, UserEventKind
 from microchel.desktop.geometry import clamp_to_screen, desktop_area
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SPRITE = (
-    Path(__file__).resolve().parents[3] / "assets" / "characters" / "test" / "test_idle.png"
-)
-DEFAULT_ANIMATION_ROOT = Path(__file__).resolve().parents[3] / "assets" / "characters" / "test"
+CHARACTERS_ROOT = Path(__file__).resolve().parents[3] / "assets" / "characters"
+DEFAULT_ANIMATION_ROOT = CHARACTERS_ROOT / "malinka"
+# спрайт-фоллбэк, пока анимации не подключены: первый кадр приветствия
+DEFAULT_SPRITE = DEFAULT_ANIMATION_ROOT / "Welcome" / "Greeting" / "1" / "_000_150.png"
 DEFAULT_SIZE = 160
+DEFAULT_PET_SCALE = 0.65  # масштаб персонажа: кадр 296×471 → окно ~192×306
 DRAG_THRESHOLD_PX = 5  # смещение ЛКМ ≥ порога — это уже драг, не клик (FR-P3.5)
 
 
 class PetWindow(QWidget):
-    """Прозрачное окно с тестовым спрайтом и перетаскиванием."""
+    """Прозрачное окно с перетаскиванием; спрайт-фоллбэк — первый кадр приветствия."""
 
     def __init__(
         self,
@@ -48,12 +51,20 @@ class PetWindow(QWidget):
         self._sprite_path = sprite_path or DEFAULT_SPRITE
         self._sprite = QPixmap(str(self._sprite_path))
         if self._sprite.isNull():
-            logger.warning("Спрайт не загружен: %s (временная заглушка)", self._sprite_path)
+            logger.warning("Спрайт-фоллбэк не загружен: %s", self._sprite_path)
 
         # PHASE 2: плеер анимаций и текущий кадр (None → рисуем статичный спрайт)
         self._player: AnimationPlayer | None = None
         self._clips: dict[str, AnimationClip] = {}
         self._current_frame: QPixmap | None = None
+        self._root: Path = DEFAULT_ANIMATION_ROOT
+        self._specs: dict[str, ClipSpec] = {}  # playback-спека (clips.toml)
+        self._character: str = DEFAULT_ANIMATION_ROOT.name
+        # PHASE 4: масштаб персонажа и скорость анимаций.
+        # Кадры сменяются без кроссфейда (решение пользователя): плеер играет
+        # «в лоб», полупрозрачность/рябь при быстрой смене кадров недопустимы.
+        self._pet_scale = DEFAULT_PET_SCALE
+        self._speed = 1.0
 
         self.setWindowTitle("Microchel")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
@@ -75,6 +86,8 @@ class PetWindow(QWidget):
         клипов нет (окно остаётся на статичном спрайте).
         """
         root = root or DEFAULT_ANIMATION_ROOT
+        self._root = root
+        self._specs = load_clip_specs(root / "clips.toml")
         clips: dict[str, AnimationClip] = {}
         for clip_dir in discover_clip_dirs(root):
             try:
@@ -87,17 +100,35 @@ class PetWindow(QWidget):
             logger.info("Анимации не найдены в %s — статичный спрайт", root)
             return False
 
+        if self._player is not None:
+            # повторное подключение (смена персонажа): останавливаем старый плеер,
+            # иначе его таймер продолжит показывать кадры прежнего персонажа
+            self._player.stop()
+            self._player.frame_changed.disconnect(self._on_frame_changed)
+            self._player.deleteLater()
+        self._current_frame = None
+
         player = AnimationPlayer(self)
         idle = next(
             (clip for name, clip in clips.items() if "idle" in name.casefold()),
             next(iter(clips.values())),
         )
         player.set_idle(idle)
+        transition = clips.get("Move/Transition")
+        if transition is not None:
+            # каждая смена анимации начинается с переходного клипа (MOVED CLIP)
+            player.set_transition(transition)
         player.frame_changed.connect(self._on_frame_changed)
         player.play(idle)
         self._player = player
         self._clips = clips
-        logger.info("Анимации подключены: %d клипов, idle=%s", len(clips), idle.name)
+        self._character = root.name
+        logger.info(
+            "Анимации подключены: персонаж %s, %d клипов, idle=%s",
+            root.name,
+            len(clips),
+            idle.name,
+        )
         return True
 
     def play_clip(
@@ -107,24 +138,156 @@ class PetWindow(QWidget):
         priority: Priority = Priority.BEHAVIOR,
         loop: bool | int = True,
         restart: bool = False,
+        frame_indices: Sequence[int] | None = None,
+        mirror: bool = False,
     ) -> bool:
-        """Запросить анимацию по префиксу имени (демо, character, тесты)."""
+        """Запросить анимацию по префиксу имени (демо, character, showcase, тесты).
+
+        frame_indices — показать только эти кадры клипа в заданном порядке
+        (план playback-спеки: сегмент loop с повторами); такой план всегда
+        играется одним проходом (loop принудительно False). mirror — показ
+        кадров зеркально по X (spec.mirror = "left").
+        """
         if self._player is None:
             return False
         for name, clip in self._clips.items():
             if name.startswith(name_prefix):
-                self._player.play(clip, priority=priority, loop=loop, restart=restart)
+                if frame_indices is not None:
+                    planned = self._plan_clip(clip, frame_indices)
+                    if planned is None:
+                        return False
+                    clip = planned
+                    loop = False
+                self._player.play(
+                    clip,
+                    priority=priority,
+                    loop=loop,
+                    restart=restart,
+                    mirror=mirror,
+                    speed=self._speed,
+                )
                 return True
         logger.warning("Клип не найден по префиксу: %s", name_prefix)
         return False
 
+    @staticmethod
+    def _plan_clip(clip: AnimationClip, frame_indices: Sequence[int]) -> AnimationClip | None:
+        """Производный клип по плану: кадры исходного в заданном порядке.
+
+        Полный диапазон без повторов → исходный клип (имя и логи не меняем).
+        Пустой план или индексы вне границ — None (запрос отклоняется).
+        """
+        count = len(clip.frames)
+        full = tuple(range(count))
+        indices = tuple(frame_indices)
+        if indices == full:
+            return clip
+        if not indices:
+            logger.warning("План клипа %s пуст — запрос отклонён", clip.name)
+            return None
+        bad = next((index for index in indices if index < 0 or index >= count), None)
+        if bad is not None:
+            logger.warning(
+                "План клипа %s: индекс %s вне [0, %d) — запрос отклонён",
+                clip.name,
+                bad,
+                count,
+            )
+            return None
+        return AnimationClip(
+            name=f"{clip.name}#plan",
+            line=clip.line,
+            frames=tuple(clip.frames[index] for index in indices),
+        )
+
+    def clip_durations(self, name_prefix: str) -> tuple[int, ...] | None:
+        """Длительности кадров клипа (мс) по порядку индексов; None — нет клипа."""
+        for name, clip in self._clips.items():
+            if name.startswith(name_prefix):
+                return tuple(frame.duration_ms for frame in clip.frames)
+        return None
+
+    @property
+    def clip_specs(self) -> Mapping[str, ClipSpec]:
+        """Playback-спека текущего персонажа (clips.toml; пусто — без уточнений)."""
+        return self._specs
+
+    @property
+    def character_root(self) -> Path:
+        """Каталог ассетов текущего персонажа (для clips.toml и ресурсов)."""
+        return self._root
+
     def available_clip_names(self) -> list[str]:
         return sorted(self._clips)
 
+    def available_characters(self) -> list[str]:
+        """Имена доступных персонажей — каталоги в assets/characters/ (PHASE 4)."""
+        if not CHARACTERS_ROOT.is_dir():
+            return []
+        return sorted(entry.name for entry in CHARACTERS_ROOT.iterdir() if entry.is_dir())
+
+    @property
+    def character(self) -> str:
+        """Имя текущего персонажа (каталог с ассетами)."""
+        return self._character
+
+    @property
+    def pet_scale(self) -> float:
+        """Масштаб персонажа на экране (1.0 — натуральный размер кадра)."""
+        return self._pet_scale
+
+    @property
+    def animation_speed(self) -> float:
+        """Глобальная скорость анимаций (1.0 — норма; 0.5 — вдвое медленнее)."""
+        return self._speed
+
+    def set_pet_scale(self, scale: float) -> None:
+        """Масштаб персонажа: окно под кадр × scale, рендер с качеством (PHASE 4).
+
+        Уменьшение идёт через SmoothPixmapTransform (билинейно) — без потери
+        качества; невалидное значение отклоняется.
+        """
+        value = float(scale)
+        if value <= 0:
+            logger.warning("pet-scale=%r не положительное — отклонено", scale)
+            return
+        self._pet_scale = value
+        frame = self._current_frame
+        if frame is not None and not frame.isNull():
+            self._resize_to_frame(frame)
+        elif not self._sprite.isNull():
+            self.resize(self._scaled_size(self._sprite.size()))
+        logger.info("Масштаб персонажа: %.2f", value)
+
+    def set_animation_speed(self, speed: float) -> None:
+        """Глобальная скорость анимаций: 1 — норма, 0.5 — вдвое медленнее (PHASE 4)."""
+        value = float(speed)
+        if value <= 0:
+            logger.warning("speed=%r не положительное — отклонено", speed)
+            return
+        self._speed = value
+        logger.info("Скорость анимаций: %.2f", value)
+
+    def switch_character(self, name: str) -> bool:
+        """Переключить персонажа по имени каталога (контекстное меню).
+
+        False — каталог не найден или в нём нет клипов; текущий не меняется.
+        """
+        root = CHARACTERS_ROOT / name
+        if not root.is_dir():
+            logger.warning("Персонаж не найден: %s", root)
+            return False
+        return self.setup_animation(root)
+
     def _on_frame_changed(self, pixmap: QPixmap) -> None:
-        """Новый кадр: подстроить размер под кадр с сохранением центра (FR-P2.6)."""
+        """Новый кадр: подстроить размер (с учётом pet-scale) и перерисовать."""
         self._current_frame = pixmap
-        frame_size = pixmap.size()
+        self._resize_to_frame(pixmap)
+        self.update()
+
+    def _resize_to_frame(self, pixmap: QPixmap) -> None:
+        """Подстроить размер под кадр с учётом масштаба, сохранив центр (FR-P2.6)."""
+        frame_size = self._scaled_size(pixmap.size())
         if frame_size != self.size() and not frame_size.isEmpty():
             center = self.geometry().center()
             self.resize(frame_size)
@@ -133,7 +296,13 @@ class PetWindow(QWidget):
                 center.y() - frame_size.height() // 2,
             )
             self.move_clamped(top_left)
-        self.update()
+
+    def _scaled_size(self, size: QSize) -> QSize:
+        """Размер кадра с учётом pet-scale (минимум 1 px по стороне)."""
+        return QSize(
+            max(1, int(round(size.width() * self._pet_scale))),
+            max(1, int(round(size.height() * self._pet_scale))),
+        )
 
     # --- отрисовка -----------------------------------------------------
 
@@ -196,9 +365,7 @@ class PetWindow(QWidget):
         Зажим по объединению экранов, а не по одному: пит может перетаскиваться
         между мониторами (мультимониторная конфигурация dev-стенда).
         """
-        area = desktop_area(
-            screen.availableGeometry() for screen in QApplication.screens()
-        )
+        area = desktop_area(screen.availableGeometry() for screen in QApplication.screens())
         if area.isEmpty():
             primary = self.screen() or QApplication.primaryScreen()
             area = primary.availableGeometry()
@@ -230,11 +397,25 @@ class PetWindow(QWidget):
     def build_menu(self) -> QMenu:
         """Собрать контекстное меню (тестируется отдельно от показа)."""
         menu = QMenu(self)
+        names = self.available_characters()
+        if len(names) > 1:
+            submenu = menu.addMenu("Персонаж")
+            for name in names:
+                action = submenu.addAction(name)
+                action.setCheckable(True)
+                action.setChecked(name == self._character)
+                action.setData(name)
         menu.addAction("Выход")
         return menu
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         menu = self.build_menu()
         chosen = menu.exec(event.globalPos())
-        if chosen is not None and chosen.text() == "Выход":
+        if chosen is None:
+            return
+        if chosen.text() == "Выход":
             QApplication.quit()
+            return
+        name = chosen.data()
+        if isinstance(name, str) and self.switch_character(name):
+            logger.info("Персонаж переключён: %s", name)

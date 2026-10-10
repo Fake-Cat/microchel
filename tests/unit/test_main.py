@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+import random
+
 import pytest
 from PySide6.QtCore import QObject
 from pytestqt.qtbot import QtBot
 
 from microchel.animation.queue import Priority
+from microchel.animation.spec import ClipSpec
 from microchel.character.states import CharacterState
 from microchel.desktop.main import (
     parse_args,
@@ -62,6 +66,28 @@ def test_states_with_clips_empty_input() -> None:
     assert states_with_clips([]) == set()
 
 
+def test_states_with_clips_none_logs_single_info(caplog: pytest.LogCaptureFixture) -> None:
+    """Welcome-only: одна info-строка вместо предупреждения по состоянию (2026-10-10)."""
+    with caplog.at_level(logging.INFO, logger="microchel.desktop.main"):
+        assert states_with_clips(["Welcome/Normal"]) == set()
+    records = [record for record in caplog.records if record.name == "microchel.desktop.main"]
+    assert len(records) == 1
+    assert records[0].levelname == "INFO"
+
+
+def test_states_with_clips_partial_logs_single_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Частично покрытые состояния — одна агрегированная строка warning."""
+    with caplog.at_level(logging.INFO, logger="microchel.desktop.main"):
+        available = states_with_clips(["Idle/Happy", "Walk/Normal"])
+    assert available == {CharacterState.IDLE, CharacterState.WALK}
+    records = [record for record in caplog.records if record.name == "microchel.desktop.main"]
+    assert len(records) == 1
+    assert records[0].levelname == "WARNING"
+    assert "sleep" in records[0].getMessage()
+
+
 def test_parse_args_showcase_flag() -> None:
     args = parse_args(["--showcase"])
     assert args.showcase is True
@@ -73,43 +99,183 @@ def test_parse_args_demo_and_showcase_mutually_exclusive() -> None:
         parse_args(["--demo", "--showcase"])
 
 
+class FakeShowcaseWindow(QObject):
+    """Фейк окна для showcase: сбор вызовов play_clip и move_by (PHASE 4)."""
+
+    def __init__(
+        self,
+        names: list[str] | None = None,
+        *,
+        specs: dict[str, ClipSpec] | None = None,
+        durations: tuple[int, ...] = (100, 100, 100, 100),
+    ) -> None:
+        super().__init__()
+        self._names = names if names is not None else ["Walk/Normal", "Idle/Happy", "Blink/Happy"]
+        self.clip_specs: dict[str, ClipSpec] = specs or {}
+        self.durations = durations
+        self.calls: list[dict[str, object]] = []
+        self.moves: list[int] = []
+
+    def available_clip_names(self) -> list[str]:
+        return list(self._names)
+
+    def clip_durations(self, name: str) -> tuple[int, ...] | None:
+        if any(name.startswith(known) for known in self._names):
+            return self.durations
+        return None
+
+    def play_clip(self, name: str, **kwargs: object) -> bool:
+        self.calls.append({"name": name, **kwargs})
+        return True
+
+    def move_by(self, dx: int) -> bool:
+        self.moves.append(dx)
+        return True
+
+
 def test_start_showcase_plays_all_clips_in_order(qtbot: QtBot) -> None:
-    """Idle первым, далее по алфавиту; каждый слот — restart+loop, затем новый цикл."""
-    calls: list[tuple[str, Priority, bool | int, bool]] = []
+    """Idle не показывается отдельным слотом; далее по алфавиту; restart по плану."""
+    window = FakeShowcaseWindow()
 
-    class FakeWindow(QObject):
-        def available_clip_names(self) -> list[str]:
-            return ["Walk/Normal", "Idle/Happy", "Blink/Happy"]
-
-        def play_clip(
-            self,
-            name: str,
-            *,
-            priority: Priority = Priority.BEHAVIOR,
-            loop: bool | int = True,
-            restart: bool = False,
-        ) -> bool:
-            calls.append((name, priority, loop, restart))
-            return True
-
-    timer = start_showcase(FakeWindow(), seconds=0.05)
-    qtbot.waitUntil(lambda: len(calls) >= 4, timeout=3000)
+    timer = start_showcase(window, pause_s=0.05)
+    qtbot.waitUntil(lambda: len(window.calls) >= 3, timeout=3000)
     timer.stop()
-    names = [call[0] for call in calls]
-    assert names == ["Idle/Happy", "Blink/Happy", "Walk/Normal", "Idle/Happy"]
-    _first_name, first_priority, first_loop, first_restart = calls[0]
-    assert first_priority is Priority.IDLE
-    assert first_loop is True
-    assert first_restart is True
+    names = [call["name"] for call in window.calls]
+    assert names == ["Blink/Happy", "Walk/Normal", "Blink/Happy"]
+    first = window.calls[0]
+    assert first["priority"] is Priority.EVENT
+    assert first["restart"] is True
+    # план без спеки: полный цикл одним проходом (loop=False — план конечен)
+    assert first["loop"] is False
+    assert first["frame_indices"] == (0, 1, 2, 3)
+
+
+def test_start_showcase_idle_clips_skipped() -> None:
+    """Idle-клипы исключены из показа (играют фоном, не слотом)."""
+    window = FakeShowcaseWindow(["Idle/Happy", "Blink/Happy"])
+
+    timer = start_showcase(window, pause_s=0.05)
+    assert [call["name"] for call in window.calls] == ["Blink/Happy"]
+    timer.stop()
 
 
 def test_start_showcase_without_clips_timer_inactive() -> None:
-    class EmptyWindow(QObject):
-        def available_clip_names(self) -> list[str]:
-            return []
-
-        def play_clip(self, *_args: object, **_kwargs: object) -> bool:
-            return False
-
-    timer = start_showcase(EmptyWindow())
+    window = FakeShowcaseWindow([])
+    timer = start_showcase(window)
     assert not timer.isActive()
+
+
+def test_start_showcase_plays_full_cycle_segment() -> None:
+    """loop=[1, 2] из спеки: полный цикл = один проход сегмента (без кручения слота)."""
+    spec = ClipSpec(name="Walk/Normal", frames=4, loop=(1, 2))
+    window = FakeShowcaseWindow(["Walk/Normal"], specs={"Walk/Normal": spec})
+
+    timer = start_showcase(window, pause_s=0.05)
+    assert window.calls[0]["frame_indices"] == (1, 2)
+    assert window.calls[0]["loop"] is False
+    timer.stop()
+
+
+def test_start_showcase_once_clip_plays_single_pass() -> None:
+    """once=true — один проход всего клипа."""
+    spec = ClipSpec(name="Blink/Happy", frames=4, once=True)
+    window = FakeShowcaseWindow(["Blink/Happy"], specs={"Blink/Happy": spec})
+
+    timer = start_showcase(window, pause_s=0.05)
+    assert window.calls[0]["frame_indices"] == (0, 1, 2, 3)
+    assert window.calls[0]["loop"] is False
+    timer.stop()
+
+
+def test_start_showcase_repeat_fill_uses_target() -> None:
+    """repeat_fill_ms учитывается: повторов ~ цель, но не «до слота» (его больше нет)."""
+    spec = ClipSpec(name="Angry/Normal", frames=4, loop=(0, 1), repeat_fill_ms=400)
+    window = FakeShowcaseWindow(["Angry/Normal"], specs={"Angry/Normal": spec})
+
+    timer = start_showcase(window, pause_s=0.05, rng=random.Random(42))
+    indices = window.calls[0]["frame_indices"]
+    assert isinstance(indices, tuple)
+    # сегмент (0, 1) по 100 мс: цель 400 мс → target 2 → 1..3 повтора
+    assert 2 <= len(indices) <= 6
+    assert set(indices) <= {0, 1}
+    timer.stop()
+
+
+def test_start_showcase_slot_duration_uses_speed(qtbot: QtBot) -> None:
+    """Слот = план / speed + пауза: следующая анимация через это время."""
+    window = FakeShowcaseWindow(["Blink/Happy"])  # 4 кадра по 100 мс
+
+    timer = start_showcase(window, pause_s=0.1, speed=2.0)
+    # 400 мс / speed 2 + 100 мс паузы = 300 мс до следующей анимации
+    assert timer.interval() == 300
+    qtbot.waitUntil(lambda: len(window.calls) >= 2, timeout=3000)
+    timer.stop()
+    assert window.calls[1]["name"] == "Blink/Happy"  # цикл по одному клипу
+
+
+def test_start_showcase_mirror_from_spec() -> None:
+    """mirror="left" — план играется зеркально (правило спеки в рантайме)."""
+    spec = ClipSpec(name="Walk/Direct", frames=4, loop=(1, 2), mirror="left")
+    window = FakeShowcaseWindow(["Walk/Direct"], specs={"Walk/Direct": spec})
+
+    timer = start_showcase(window, pause_s=0.05)
+    assert window.calls[0]["mirror"] is True
+    timer.stop()
+
+
+def test_start_showcase_walk_motion_steps_window(qtbot: QtBot) -> None:
+    """motion=walk: окно шагает во время клипа, направление влево для «left»."""
+    spec = ClipSpec(name="Walk/Left", frames=4, loop=(0, 3), motion="walk")
+    window = FakeShowcaseWindow(["Walk/Left"], specs={"Walk/Left": spec})
+
+    timer = start_showcase(window, pause_s=1.0, walk_step_px=3, walk_interval_ms=5)
+    qtbot.waitUntil(lambda: len(window.moves) > 0, timeout=3000)
+    timer.stop()
+    assert all(dx == -3 for dx in window.moves)
+
+
+def test_start_showcase_no_motion_without_spec(qtbot: QtBot) -> None:
+    """Без motion в спеке окно не двигается."""
+    window = FakeShowcaseWindow(["Blink/Happy"])
+
+    timer = start_showcase(window, pause_s=1.0, walk_interval_ms=5)
+    qtbot.wait(200)
+    timer.stop()
+    assert window.moves == []
+
+
+def test_parse_args_showcase_interval_default() -> None:
+    args = parse_args(["--showcase"])
+    assert args.showcase_interval == 1.0  # пауза между анимациями
+
+
+def test_parse_args_showcase_interval_custom() -> None:
+    args = parse_args(["--showcase", "--showcase-interval", "1.5"])
+    assert args.showcase_interval == 1.5
+
+
+def test_parse_args_showcase_interval_must_be_positive() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--showcase-interval", "0"])
+
+
+def test_parse_args_speed_and_scale_defaults() -> None:
+    args = parse_args([])
+    assert args.speed == 1.0
+    assert args.pet_scale == pytest.approx(0.65)
+
+
+def test_parse_args_speed_and_scale_custom() -> None:
+    args = parse_args(["--speed", "0.5", "--pet-scale", "0.5"])
+    assert args.speed == 0.5
+    assert args.pet_scale == 0.5
+
+
+def test_parse_args_speed_must_be_positive() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--speed", "0"])
+
+
+def test_parse_args_pet_scale_must_be_positive() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--pet-scale", "-1"])

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPainter, QPixmap
 from pytestqt.qtbot import QtBot
 
 from microchel.animation.frames import AnimationClip, load_clip
@@ -108,6 +108,102 @@ class TestPlayback:
         assert finished == []
 
 
+class TestMirror:
+    """Зеркальный показ кадров (спека mirror="left", PHASE 4)."""
+
+    @staticmethod
+    def _make_asymmetric_clip(root: Path) -> AnimationClip:
+        """Кадр с красной полосой у ЛЕВОГО края — видно направление флипа."""
+        line_dir = root / "Side" / "State" / "1"
+        line_dir.mkdir(parents=True)
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.fillRect(0, 0, 6, 24, Qt.GlobalColor.red)
+        painter.end()
+        assert pixmap.save(str(line_dir / "_000_500.png"), "PNG")
+        return load_clip(line_dir)
+
+    def test_mirror_flips_frame_horizontally(self, player: AnimationPlayer, tmp_path: Path) -> None:
+        clip = self._make_asymmetric_clip(tmp_path)
+        received: list[QPixmap] = []
+        player.frame_changed.connect(received.append)
+
+        player.play(clip, mirror=True)
+
+        assert player.is_mirrored is True
+        assert len(received) == 1
+        image = received[0].toImage()
+        # полоса была слева → после флипа справа
+        assert image.pixelColor(20, 12) == Qt.GlobalColor.red
+        assert image.pixelColor(2, 12).alpha() == 0
+
+    def test_without_mirror_frame_unchanged(self, player: AnimationPlayer, tmp_path: Path) -> None:
+        clip = self._make_asymmetric_clip(tmp_path)
+        received: list[QPixmap] = []
+        player.frame_changed.connect(received.append)
+
+        player.play(clip)
+
+        assert player.is_mirrored is False
+        image = received[0].toImage()
+        assert image.pixelColor(2, 12) == Qt.GlobalColor.red
+        assert image.pixelColor(20, 12).alpha() == 0
+
+
+class TestTransition:
+    """Переходный клип (MOVED CLIP): каждая смена анимации начинается с него."""
+
+    def test_change_starts_with_transition(
+        self, qtbot: QtBot, player: AnimationPlayer, clips: dict[str, AnimationClip], tmp_path: Path
+    ) -> None:
+        transition = _make_clip(tmp_path, "Move", count=3)
+        player.set_transition(transition)
+        player.set_idle(clips["idle"])
+        player.play(clips["idle"])  # первый старт — без перехода
+        assert player.current_clip is not None
+        assert player.current_clip.name == "Idle/State"
+        player.play(clips["blink"], restart=True, loop=False)
+        # смена анимации: сразу играется переход, цель — после него
+        assert player.current_clip is not None
+        assert player.current_clip.name == "Move/State"
+        qtbot.waitUntil(
+            lambda: player.current_clip is not None and player.current_clip.name == "Blink/State",
+            timeout=2000,
+        )
+
+    def test_transition_never_emits_finished(
+        self, qtbot: QtBot, player: AnimationPlayer, clips: dict[str, AnimationClip], tmp_path: Path
+    ) -> None:
+        """Конец перехода — не конец анимации: иначе controller перезапустит состояние."""
+        transition = _make_clip(tmp_path, "Move", count=3)
+        player.set_transition(transition)
+        player.set_idle(clips["idle"])
+        finished: list[str] = []
+        player.animation_finished.connect(finished.append)
+        player.play(clips["idle"])
+        player.play(clips["blink"], restart=True, loop=False)
+        # blink отыграет → возврат к idle (тоже через переход)
+        qtbot.waitUntil(
+            lambda: player.current_clip is not None and player.current_clip.name == "Idle/State",
+            timeout=3000,
+        )
+        qtbot.wait(100)  # дать перепроверить, что хвосты отработали
+        assert "Move/State" not in finished
+        assert "Blink/State" in finished
+
+    def test_same_clip_restart_without_transition(
+        self, player: AnimationPlayer, clips: dict[str, AnimationClip], tmp_path: Path
+    ) -> None:
+        """Перезапуск того же клипа — не смена, переход не вставляется."""
+        transition = _make_clip(tmp_path, "Move", count=3)
+        player.set_transition(transition)
+        player.play(clips["idle"])
+        player.play(clips["idle"], restart=True)
+        assert player.current_clip is not None
+        assert player.current_clip.name == "Idle/State"
+
+
 class TestTransitions:
     def test_same_clip_not_restarted(
         self, qtbot: QtBot, player: AnimationPlayer, clips: dict[str, AnimationClip]
@@ -131,8 +227,7 @@ class TestTransitions:
             player.current_clip is not None and player.current_clip.name == "Blink/State"
         )
         qtbot.waitUntil(
-            lambda: player.current_clip is not None
-            and player.current_clip.name == "Blink/State",
+            lambda: player.current_clip is not None and player.current_clip.name == "Blink/State",
             timeout=2000,
         )
 
@@ -174,3 +269,37 @@ class TestTransitions:
         qtbot.wait(FRAME_MS * 3)  # idle-фоллбэк успел бы перетёреть, если бы мог
         assert player.current_clip is not None
         assert player.current_clip.name == "Walk/State"
+
+
+class TestSpeed:
+    """Множитель скорости кадров (PHASE 4, --speed): duration / speed."""
+
+    def test_default_speed_is_one(
+        self, player: AnimationPlayer, clips: dict[str, AnimationClip]
+    ) -> None:
+        player.play(clips["idle"])
+        assert player.speed == 1.0
+        assert player._timer.interval() == FRAME_MS  # без деления
+
+    def test_speed_two_halves_frame_duration(self, player: AnimationPlayer, tmp_path: Path) -> None:
+        clip = _make_clip(tmp_path, "Quick", count=2, duration_ms=300)
+        player.play(clip, speed=2.0)
+        assert player.speed == 2.0
+        assert player._timer.interval() == 150  # 300 мс / 2
+
+    def test_slow_speed_doubles_frame_duration(
+        self, player: AnimationPlayer, tmp_path: Path
+    ) -> None:
+        clip = _make_clip(tmp_path, "Slow", count=2, duration_ms=300)
+        player.play(clip, speed=0.5)
+        assert player.speed == 0.5
+        assert player._timer.interval() == 600  # 300 мс / 0.5
+
+    def test_speed_advances_frames_faster(
+        self, qtbot: QtBot, player: AnimationPlayer, tmp_path: Path
+    ) -> None:
+        """При speed=2 кадр 300 мс сменяется раньше, чем за 200 мс."""
+        clip = _make_clip(tmp_path, "Quick2", count=3, duration_ms=300)
+        player.play(clip, speed=2.0)
+        qtbot.wait(200)
+        assert player.frame_index >= 1

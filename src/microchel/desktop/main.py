@@ -8,20 +8,21 @@ import logging
 import os
 import random
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from microchel.animation.queue import Priority
+from microchel.animation.spec import ClipSpec, plan_frames
 from microchel.character.config import DEFAULT_CONFIG_PATH, load_behavior_config
-from microchel.character.controller import CharacterController
+from microchel.character.controller import CharacterController, EdgeWalker
 from microchel.character.fsm import BehaviorFSM
 from microchel.character.states import STATE_CLIP_PREFIX, CharacterState
 from microchel.common.event_bus import EventBus
 from microchel.common.events import SystemEvent, SystemEventKind
 from microchel.common.logging_config import setup_logging
-from microchel.desktop.window import PetWindow
+from microchel.desktop.window import DEFAULT_PET_SCALE, PetWindow
 
 logger = logging.getLogger(__name__)
 
@@ -67,46 +68,116 @@ def start_demo(window: PetWindow, interval_ms: int = 4000) -> QTimer:
     return timer
 
 
-def start_showcase(window: PetWindow, *, seconds: float = 10.0) -> QTimer:
-    """Показать все клипы по очереди по seconds секунд (ручная проверка ассетов).
+def start_showcase(
+    window: PetWindow,
+    *,
+    pause_s: float = 1.0,
+    speed: float = 1.0,
+    walk_step_px: int = 3,
+    walk_interval_ms: int = 60,
+    rng: random.Random | None = None,
+) -> QTimer:
+    """Показать все анимации по очереди — полный цикл каждой (PHASE 4).
 
-    Каждый слот: restart=True (немедленная замена предыдущего клипа) и
-    loop=True (короткие клипы вроде blink не уходят в idle-фоллбэк до конца
-    слота). После последнего клипа цикл повторяется. Окно не двигается —
-    FSM отключён, показываются только анимации.
+    Каждый клип играется целиком по playback-спеке (plan_frames без слота:
+    once — один проход; loop-сегмент [a, b] — один цикл; prefix_once /
+    suffix_on_exit; зеркало mirror="left"), затем пауза pause_s и следующий.
+    Idle-клипы не показываются отдельными слотами (играют фоном).
+    motion=walk — шаги EdgeWalker с разворотом у края, motion=traverse — шаги
+    до края без разворота (допущение — спека FSM ещё не утверждена).
+    Список клипов и спека перечитываются на каждом слоте — персонажа можно
+    менять через меню прямо во время показа. Окно при этом FSM отключён,
+    показываются только анимации.
     """
-    clips = sorted(
-        window.available_clip_names(),
-        key=lambda name: (not name.casefold().startswith("idle"), name.casefold()),
-    )
     index = 0
+    walker: EdgeWalker | None = None
+    traverse_dx = 0  # шаг traverse; 0 — motion не активен
+    rng = rng or random.Random()
 
-    def next_clip() -> None:
-        nonlocal index
-        if not clips:
-            return
-        name = clips[index % len(clips)]
-        index += 1
-        lowered = name.casefold()
-        if "idle" in lowered:
-            priority = Priority.IDLE
-        elif "blink" in lowered:
-            priority = Priority.EVENT
-        else:
-            priority = Priority.BEHAVIOR
-        if window.play_clip(name, priority=priority, loop=True, restart=True):
-            number = (index - 1) % len(clips) + 1
-            cycle = (index - 1) // len(clips) + 1
-            logger.info("showcase: %s (клип %d из %d, цикл %d)", name, number, len(clips), cycle)
+    motion_timer = QTimer(window)
+    motion_timer.setInterval(max(1, walk_interval_ms))
+
+    def motion_tick() -> None:
+        if walker is not None:
+            walker.step(window.move_by)
+        elif traverse_dx and not window.move_by(traverse_dx):
+            motion_timer.stop()  # упёрлись в край — дальше без движения
+
+    motion_timer.timeout.connect(motion_tick)
 
     timer = QTimer(window)
-    timer.setInterval(max(int(seconds * 1000), 1))
+    timer.setSingleShot(True)
+
+    def next_clip() -> None:
+        nonlocal index, walker, traverse_dx
+        # idle не показываем отдельными слотами — это «фоновая» анимация
+        clips = sorted(
+            name for name in window.available_clip_names() if not name.casefold().startswith("idle")
+        )
+        if not clips:
+            motion_timer.stop()
+            return
+        index %= len(clips)
+        name = clips[index]
+        index += 1
+        lowered = name.casefold()
+        priority = Priority.EVENT if "blink" in lowered else Priority.BEHAVIOR
+
+        spec = window.clip_specs.get(name, ClipSpec())
+        durations = window.clip_durations(name)
+
+        # motion: walk — с разворотом у края; traverse — до края без разворота
+        walker = None
+        traverse_dx = 0
+        motion_timer.stop()
+        if durations is not None and spec.motion in ("walk", "traverse"):
+            direction = -1 if (spec.mirror == "left" or "left" in lowered) else 1
+            if spec.motion == "walk":
+                walker = EdgeWalker(walk_step_px, direction=direction)
+            else:
+                traverse_dx = direction * walk_step_px
+            motion_timer.start()
+
+        # план: полный цикл клипа (без слота) — как в рантайме за один проход
+        frame_indices: Sequence[int] | None = None
+        mirror = spec.mirror == "left"
+        loop: bool | int = True
+        slot_ms = 0
+        if durations is not None:
+            plan = plan_frames(spec, durations, rng=rng)
+            frame_indices = plan.indices
+            mirror = plan.mirror
+            loop = False
+            played_ms = sum(durations[frame] for frame in plan.indices)
+            slot_ms = int(played_ms / max(speed, 1e-6))
+
+        if window.play_clip(
+            name,
+            priority=priority,
+            loop=loop,
+            restart=True,
+            frame_indices=frame_indices,
+            mirror=mirror,
+        ):
+            number = (index - 1) % len(clips) + 1
+            cycle = (index - 1) // len(clips) + 1
+            logger.info(
+                "showcase: %s (анимация %d из %d, цикл %d, план %d кадров%s%s)",
+                name,
+                number,
+                len(clips),
+                cycle,
+                len(frame_indices) if frame_indices is not None else 0,
+                ", mirror" if mirror else "",
+                f", motion={spec.motion}" if spec.motion != "none" else "",
+            )
+        timer.start(max(1, slot_ms + int(pause_s * 1000)))
+
     timer.timeout.connect(next_clip)
-    if not clips:
+    if not window.available_clip_names():
         logger.warning("showcase: клипы не найдены, показ отключён")
         return timer
     next_clip()
-    timer.start()
     return timer
 
 
@@ -114,7 +185,9 @@ def states_with_clips(clip_names: Iterable[str]) -> set[CharacterState]:
     """Состояния, у которых есть хотя бы один клип (FR-P3.1: нет клипа → пропуск).
 
     IDLE также может отсутствовать — FSM добавит его сам, а контроллер
-    предупредит в логе при попытке показать анимацию.
+    предупредит в логе при попытке показать анимацию. Если не найдено ни одного
+    клипа состояний (например, у малинки только Welcome) — одна info-строка
+    вместо предупреждения по каждому состоянию (NF-P3.5, 2026-10-10).
     """
     names = tuple(clip_names)
     available: set[CharacterState] = set()
@@ -122,10 +195,17 @@ def states_with_clips(clip_names: Iterable[str]) -> set[CharacterState]:
         prefix = STATE_CLIP_PREFIX[state]
         if any(name.startswith(prefix) for name in names):
             available.add(state)
-        else:
-            logger.warning(
-                "Клип состояния %s не найден (%s*) — состояние исключено", state.value, prefix
-            )
+    missing = [state for state in CharacterState if state not in available]
+    if not available:
+        logger.info(
+            "Клипы состояний не найдены (%s) — поведение не включается",
+            ", ".join(f"{state.value}={STATE_CLIP_PREFIX[state]}*" for state in missing),
+        )
+    elif missing:
+        logger.warning(
+            "Клипы состояний не найдены: %s — состояния исключены",
+            ", ".join(state.value for state in missing),
+        )
     return available
 
 
@@ -134,10 +214,14 @@ def start_behavior(window: PetWindow, bus: EventBus) -> CharacterController | No
 
     Вызывается только при подключённых анимациях; окно получает события из bus,
     контроллер — play/move-колбэки в окно и animation_finished для восстановления
-    состояния после реакции (FR-P3.5).
+    состояния после реакции (FR-P3.5). Возвращает None, если ни у одного
+    состояния нет клипа (например, только Welcome — крутка играет как idle).
     """
+    available = states_with_clips(window.available_clip_names())
+    if not available:
+        return None
     config = load_behavior_config(DEFAULT_CONFIG_PATH)
-    fsm = BehaviorFSM(config, available=states_with_clips(window.available_clip_names()))
+    fsm = BehaviorFSM(config, available=available)
     controller = CharacterController(
         fsm,
         bus,
@@ -193,14 +277,42 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     demo_group.add_argument(
         "--showcase",
         action="store_true",
-        help="показать все клипы по очереди по 10 с (ручная проверка ассетов)",
+        help="показать все анимации по очереди — полный цикл каждой (idle не показывается)",
+    )
+    parser.add_argument(
+        "--showcase-interval",
+        type=float,
+        default=1.0,
+        metavar="SEC",
+        help="пауза между анимациями в --showcase, секунд (по умолчанию 1)",
+    )
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        metavar="X",
+        help="скорость анимаций: 1 — норма, 0.5 — вдвое медленнее, 2 — вдвое быстрее",
+    )
+    parser.add_argument(
+        "--pet-scale",
+        type=float,
+        default=DEFAULT_PET_SCALE,
+        metavar="X",
+        help=f"масштаб персонажа на экране (по умолчанию {DEFAULT_PET_SCALE}; 1 — натуральный)",
     )
     parser.add_argument(
         "--demo-events",
         action="store_true",
         help="синтетические системные события каждые 45–90 с (проверка механики FR-P3.6)",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.showcase_interval <= 0:
+        parser.error("--showcase-interval должен быть > 0")
+    if args.speed <= 0:
+        parser.error("--speed должен быть > 0")
+    if args.pet_scale <= 0:
+        parser.error("--pet-scale должен быть > 0")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -221,6 +333,8 @@ def main(argv: list[str] | None = None) -> int:
     bus = EventBus()
     window = PetWindow(bus=bus)
     has_animation = window.setup_animation()
+    window.set_pet_scale(args.pet_scale)
+    window.set_animation_speed(args.speed)
     window.show()
     logger.info("Окно показано: %dx%d, позиция %s", window.width(), window.height(), window.pos())
 
@@ -228,8 +342,11 @@ def main(argv: list[str] | None = None) -> int:
     controller: CharacterController | None = None
     if args.showcase:
         if has_animation:
-            start_showcase(window)
-            logger.info("Showcase: все клипы по 10 с; поведение отключено")
+            start_showcase(window, pause_s=args.showcase_interval, speed=args.speed)
+            logger.info(
+                "Showcase: полный цикл каждой анимации, пауза %s с; поведение отключено",
+                args.showcase_interval,
+            )
         else:
             logger.warning("--showcase: анимации не подключены, показ отключён")
     elif args.demo:

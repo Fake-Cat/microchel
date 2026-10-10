@@ -24,12 +24,14 @@ class Priority(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class AnimationRequest:
-    """Запрос проигрывания клипа: приоритет, loop, немедленный restart."""
+    """Запрос проигрывания клипа: приоритет, loop, restart, зеркало, скорость."""
 
     clip: AnimationClip
     priority: Priority = Priority.IDLE
     loop: bool = True
     restart: bool = False
+    mirror: bool = False  # показывать кадры зеркально (spec.mirror = "left")
+    speed: float = 1.0  # множитель скорости: 1 — норма, 2 — вдвое быстрее
 
 
 class AnimationQueue:

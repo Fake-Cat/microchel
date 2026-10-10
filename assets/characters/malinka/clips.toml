@@ -1,0 +1,94 @@
+# clips.toml — playback-спека клипов малинки.
+# Генерируется scripts/slice_sheets.py; индексы кадров 0-based, включительно.
+#   loop = [a, b]  — повторяемый сегмент (без него — весь клип / once)
+#   once = true    — один проход и завершение
+#   prefix_once    — кадры до loop сыграть один раз перед циклом
+#   suffix_on_exit — после loop доиграть хвост при выходе из состояния
+#   repeat_fill_ms — «несколько раз»: число повторов ~ заполнить цель (случайно)
+#   mirror = left  — loop-сегмент зеркалится (спрайт идёт влево)
+#   motion         — walk / traverse — движение окна во время клипа
+#   scale          — рантайм-масштаб (1.0 — без изменений)
+
+[clips."Angry/Normal"]
+frames = 12
+loop = [4, 10]
+repeat_fill_ms = 4000
+
+[clips."Coffee/Normal"]
+frames = 12
+loop = [1, 9]
+
+[clips."Dance/Normal"]
+frames = 12
+loop = [2, 10]
+
+[clips."Error/Panic"]
+frames = 12
+once = true
+
+[clips."Happy/Success"]
+frames = 12
+once = true
+
+[clips."Hide/Out"]
+frames = 12
+once = true
+
+[clips."Idle/Normal"]
+frames = 12
+once = true
+
+[clips."Lie/Dormant"]
+frames = 10
+once = true
+
+[clips."Move/Transition"]
+frames = 12
+once = true
+
+[clips."Sit/Happily"]
+frames = 12
+loop = [3, 11]
+
+[clips."Sleep/Wake"]
+frames = 12
+loop = [4, 9]
+suffix_on_exit = true
+
+[clips."Talk/Normal"]
+frames = 12
+loop = [0, 11]
+
+[clips."Thinking/Normal"]
+frames = 12
+once = true
+
+[clips."Sit/Typing"]
+frames = 12
+loop = [1, 10]
+
+[clips."Walk/Back"]
+frames = 12
+loop = [6, 10]
+motion = "walk"
+
+[clips."Walk/Direct"]
+frames = 12
+loop = [2, 10]
+mirror = "left"
+motion = "walk"
+
+[clips."Walk/Right"]
+frames = 12
+loop = [2, 10]
+motion = "walk"
+# спрайт мельче остальных (h≈330) — scale подбирается визуально
+
+[clips."Walk/Left"]
+frames = 12
+loop = [2, 10]
+motion = "walk"
+
+[clips."Welcome/Greeting"]
+frames = 12
+once = true

@@ -9,38 +9,38 @@
 #   repeat_fill_ms — «несколько раз»: число повторов ~ заполнить цель (случайно)
 #   mirror = left  — loop-сегмент зеркалится (спрайт идёт влево)
 #   motion         — walk / traverse — движение окна во время клипа
-#   scale          — рантайм-масштаб (авто: эталон/медиана высот; ручной перезаписывает)
+#   scale          — рантайм-масштаб (авто: эталон/главная поза; ручной перезаписывает)
 
 [clips."Angry/Normal"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [4, 10]
 repeat_fill_ms = 4000
-scale = 1.157
+scale = 1.104
 
 [clips."Coffee/Normal"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [1, 9]
-scale = 0.923
+scale = 0.920
 
 [clips."Dance/Normal"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [2, 10]
-scale = 0.962
+scale = 0.933
 
 [clips."Error/Panic"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
-scale = 1.070
+scale = 1.048
 
 [clips."Happy/Success"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
-scale = 1.080
+scale = 1.055
 
 [clips."Hide/Out"]
 frames = 12
@@ -51,44 +51,44 @@ once = true
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
-scale = 0.927
+scale = 0.920
 
 [clips."Lie/Dormant"]
 frames = 10
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 once = true
-scale = 1.078
+scale = 1.027
 
 [clips."Move/Transition"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
-scale = 1.477
+scale = 1.109
 
 [clips."Sit/Happily"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [3, 11]
-scale = 1.131
+scale = 1.025
 
 [clips."Sleep/Wake"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [4, 9]
 suffix_on_exit = true
-scale = 1.517
+scale = 1.068
 
 [clips."Talk/Normal"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [0, 11]
-scale = 1.168
+scale = 1.131
 
 [clips."Thinking/Normal"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
-scale = 1.190
+scale = 1.183
 
 [clips."Sit/Typing"]
 frames = 11
@@ -102,7 +102,7 @@ sheet_cells = [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11]
 missing_cells = [6]
 loop = [6, 10]
 motion = "walk"
-scale = 1.255
+scale = 1.114
 
 [clips."Walk/Direct"]
 frames = 12
@@ -110,14 +110,14 @@ sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [2, 10]
 mirror = "left"
 motion = "walk"
-scale = 1.165
+scale = 1.145
 
 [clips."Walk/Right"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [2, 10]
 motion = "walk"
-scale = 1.396
+scale = 1.359
 # спрайт мельче остальных (h≈333) — нормализуется авто-scale
 
 [clips."Walk/Left"]
@@ -125,10 +125,10 @@ frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 loop = [2, 10]
 motion = "walk"
-scale = 1.396
+scale = 1.359
 
 [clips."Welcome/Greeting"]
 frames = 12
 sheet_cells = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 once = true
-scale = 1.218
+scale = 1.212

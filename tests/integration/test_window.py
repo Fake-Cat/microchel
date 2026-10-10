@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QImage, QImageReader, QMouseEvent, QPixmap
+from PySide6.QtGui import QColor, QImage, QImageReader, QMouseEvent, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
@@ -654,3 +654,66 @@ class TestFrameStats:
         window.grab()  # форсирует paintEvent с оверлеем
         assert window._stats_bbox is not None
         assert window._stats_bbox == _alpha_bbox(pixmap.toImage())
+
+
+class TestModelAnchoring:
+    """Якорь отрисовки по модели: низ-центр bbox модели — в низ-центре окна."""
+
+    def test_paint_anchors_model_not_canvas(self, qtbot: QtBot) -> None:
+        """Контент смещён в канвасе — на экране модель стоит по якорю, канвас нет."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        window.set_pet_scale(1.0)
+        frame = QPixmap(64, 80)
+        frame.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(frame)
+        painter.fillRect(2, 10, 16, 40, QColor(255, 0, 0))  # модель 16×40 сдвинута влево-вверх
+        painter.end()
+        window._on_frame_changed(frame)
+
+        image = window.grab().toImage()
+        model_cx = image.width() // 2
+        # модель: низ на земле (низ окна), центр-x в центре окна
+        assert image.pixelColor(model_cx, image.height() - 1).alpha() > 0
+        assert image.pixelColor(model_cx, image.height() - 40).alpha() > 0  # верх модели
+        assert image.pixelColor(model_cx, image.height() - 41).alpha() == 0  # над моделью пусто
+        # канвас правее модели не виден — якорь по модели, не по канвасу
+        assert image.pixelColor(model_cx + 12, image.height() - 1).alpha() == 0
+
+
+class TestIdleFallback:
+    """Фоновая idle между анимациями: showcase выключает её (пауза без фона)."""
+
+    def test_disable_idle_fallback_clears_player_idle(self, qtbot: QtBot) -> None:
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+        assert window.player is not None
+        assert window.player._idle_clip is not None
+
+        window.set_idle_fallback_enabled(False)
+
+        assert window.player._idle_clip is None
+
+    def test_idle_fallback_disabled_survives_setup(self, qtbot: QtBot) -> None:
+        """Смена персонажа (setup_animation) не возвращает фоновую idle."""
+        window = PetWindow()
+        qtbot.addWidget(window)
+        window.set_idle_fallback_enabled(False)
+
+        assert window.setup_animation() is True
+
+        assert window.player is not None
+        assert window.player._idle_clip is None
+
+    def test_enable_idle_fallback_restores_player(self, qtbot: QtBot) -> None:
+        window = PetWindow()
+        qtbot.addWidget(window)
+        assert window.setup_animation() is True
+        window.set_idle_fallback_enabled(False)
+
+        window.set_idle_fallback_enabled(True)
+
+        assert window.player is not None
+        assert window.player._idle_clip is not None
+        assert window.player._idle_clip.name == "Idle/Normal"

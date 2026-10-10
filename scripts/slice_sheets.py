@@ -31,8 +31,9 @@ loop в плане — индексы ИСХОДНЫХ ячеек; в маниф
 записанных кадров (map_loop), индексация рантайма не меняется.
 
 Нормализация размера: эталон REF_HEIGHT_PX = 458 (высота Idle/Normal),
-авто-scale = 458 / медианная высота кадра (эффекты не меняют масштаб всей
-анимации); стоп-лист AUTO_SCALE_STOP и ручной scale плана перезаписывают.
+авто-scale = 458 / высота «главной позы» клипа (максимум высот кадров без
+аномального роста — эффекты и прыжки масштаб не перетягивают); стоп-лист
+AUTO_SCALE_STOP и ручной scale плана перезаписывают.
 Клип с mirror_from не режется — зеркально отражается уже нарезанный клип.
 
 Запуск (с любой директории):
@@ -45,6 +46,7 @@ import os
 import statistics
 import sys
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -72,8 +74,12 @@ SPLIT_MIN_SHARE = 0.25
 SLOT_DEVIATION_SHARE = 0.5
 # Высота кадра вне [1/HEIGHT_ANOMALY, HEIGHT_ANOMALY] от медианы — аномалия
 HEIGHT_ANOMALY = 3.0
-# Нормализация: эталон — высота Idle/Normal; авто-scale = REF / медиана высот кадров
+# Нормализация: эталон — высота Idle/Normal; авто-scale = REF / главная поза
 REF_HEIGHT_PX = 458
+# Главная поза — максимум высот кадров до MAIN_POSE_RATIO × медианы: морфинг
+# (мяч, калачик) тянет медиану вниз и растит стойки выше эталона (прыжок
+# размера на стыках), эффект-кадры тянут максимум вверх (перетягивают масштаб)
+MAIN_POSE_RATIO = 1.5
 # Стоп-лист авто-нормализации: сидячая/приседающая поза росла бы неестественно
 AUTO_SCALE_STOP = frozenset({"Sit/Typing", "Hide/Out"})
 
@@ -246,7 +252,7 @@ class SliceResult:
     frames_written: int = 0
     sheet_cells: list[int] = field(default_factory=list)  # позиция → исходная ячейка
     missing_cells: list[int] = field(default_factory=list)  # пустые ячейки (пропущены)
-    content_h: int = 0  # медианная высота кадра (авто-scale, без учёта эффектов)
+    content_h: int = 0  # медианная высота кадра (диагностика; масштаб — по главной позе)
     scale: float = 1.0
     loop_positions: tuple[int, int] | None = None  # loop плана → позиции записанных кадров
     warnings: list[str] = field(default_factory=list)
@@ -917,18 +923,34 @@ def write_frames(
             result.warnings.append(f"{tag}: контент касается края шита (возможен обрез)")
 
     result.content_h = int(round(med_h))
-    result.scale = auto_scale_for(f"{plan.anim}/{plan.state}", result.content_h)
+    result.scale = auto_scale_for(f"{plan.anim}/{plan.state}", main_pose_height(heights))
     return result
 
 
-def auto_scale_for(clip_name: str, content_h: int) -> float:
-    """Авто-масштаб клипа: эталон / медианная высота кадра; стоп-лист — 1.0.
+def main_pose_height(heights: Sequence[int]) -> int:
+    """Высота «главной позы» клипа: максимум высот без аномально высоких кадров.
 
-    Медиана, а не максимум: эффекты и прыжки не меняют масштаб всей анимации.
+    Морфинг (мяч, калачик) уводит медиану вниз: масштаб по медиане растит
+    стойки клипа выше эталона — прыжок размера на стыке с другими клипами.
+    Эффекты и прыжки уводят максимум вверх: кадры выше MAIN_POSE_RATIO ×
+    медианы в главную позу не входят (масштаб всей анимации не перетягивают).
     """
-    if clip_name in AUTO_SCALE_STOP or content_h <= 0:
+    if not heights:
+        return 0
+    med = statistics.median(heights)
+    clean = [height for height in heights if height <= med * MAIN_POSE_RATIO]
+    return int(round(max(clean) if clean else med))
+
+
+def auto_scale_for(clip_name: str, main_h: int) -> float:
+    """Авто-масштаб клипа: эталон / высота главной позы; стоп-лист — 1.0.
+
+    Главная поза дотягивается до эталона Idle/Normal — стыки клипов без
+    скачка размера; внутри клипа пропорции морфинга сохраняются как в арте.
+    """
+    if clip_name in AUTO_SCALE_STOP or main_h <= 0:
         return 1.0
-    return REF_HEIGHT_PX / content_h
+    return REF_HEIGHT_PX / main_h
 
 
 def mirror_clip(plan: ClipPlan) -> SliceResult:
@@ -1066,7 +1088,7 @@ def format_manifest(results: list[SliceResult]) -> str:
         "#   repeat_fill_ms — «несколько раз»: число повторов ~ заполнить цель (случайно)",
         "#   mirror = left  — loop-сегмент зеркалится (спрайт идёт влево)",
         "#   motion         — walk / traverse — движение окна во время клипа",
-        "#   scale          — рантайм-масштаб (авто: эталон/медиана высот; ручной перезаписывает)",
+        "#   scale          — рантайм-масштаб (авто: эталон/главная поза; ручной перезаписывает)",
         "",
     ]
     for res in results:

@@ -114,11 +114,14 @@ class PetWindow(QWidget):
         self._footprint = QSizeF(DEFAULT_SIZE, DEFAULT_SIZE)
         # переходный клип при смене анимации (MOVED CLIP); showcase выключает
         self._transition_enabled = True
+        # фоновая idle между анимациями; showcase выключает (слот без фона)
+        self._idle_fallback = True
         # анализатор модели (--show-frame-stats): bbox и размеры на каждом кадре
         self._frame_stats = frame_stats
         self._stats_bbox: QRect | None = None
         self._stats_frame_no: int | None = None
-        self._stats_cache: dict[int, QRect] = {}
+        # bbox модели по cacheKey кадра (якорь отрисовки + анализатор)
+        self._bbox_cache: dict[int, QRect] = {}
 
         self.setWindowTitle("Microchel")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
@@ -175,7 +178,7 @@ class PetWindow(QWidget):
             (clip for name, clip in clips.items() if "idle" in name.casefold()),
             next(iter(clips.values())),
         )
-        player.set_idle(idle)
+        player.set_idle(idle if self._idle_fallback else None)
         transition = clips.get("Move/Transition")
         if transition is not None and self._transition_enabled:
             # каждая смена анимации начинается с переходного клипа (MOVED CLIP)
@@ -419,6 +422,26 @@ class PetWindow(QWidget):
             self._player.set_transition(self._clips.get("Move/Transition") if value else None)
         logger.debug("Переходный клип (MOVED CLIP): %s", "включён" if value else "отключён")
 
+    def set_idle_fallback_enabled(self, enabled: bool) -> None:
+        """Фоновая idle между анимациями: вкл/выкл.
+
+        Showcase выключает её: в паузах между слотами держится последний кадр
+        показанного клипа (инспекция без фоновой анимации; «кадры idle до 6»
+        в паузе 1 с — это была фоновая Idle/Normal). Переживает смену
+        персонажа — setup_animation пересоздаёт плеер и учитывает флаг.
+        """
+        value = bool(enabled)
+        if value == self._idle_fallback:
+            return
+        self._idle_fallback = value
+        if self._player is not None and self._clips:
+            idle = next(
+                (clip for name, clip in self._clips.items() if "idle" in name.casefold()),
+                next(iter(self._clips.values())),
+            )
+            self._player.set_idle(idle if value else None)
+        logger.debug("Фоновая idle: %s", "включена" if value else "отключена")
+
     def switch_character(self, name: str) -> bool:
         """Переключить персонажа по имени каталога (контекстное меню).
 
@@ -467,11 +490,13 @@ class PetWindow(QWidget):
     # --- отрисовка -----------------------------------------------------
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """Кадр в расчётном размере снизу-по-центру; окно кадр не растягивает.
+        """Кадр в расчётном размере, якорь — низ-центр модели; окно не растягивает.
 
         Растяжение в self.rect() превращало разную высоту кадров (262–419 px)
-        в дёрганье масштаба. Теперь кадр рисуется в точном размере
-        round(canvas × pet-scale × clip-scale), привязанным к низ-центру окна.
+        в дёрганье масштаба — кадр рисуется в точном размере
+        round(canvas × pet-scale × clip-scale). Якорь по bbox модели (а не по
+        канвасу) держит ноги на земле и центр на месте: у морфинг-клипов
+        модель гуляет внутри канваса (Move: центр-x ±24 px, низ 0–10 px).
         """
         del event
         painter = QPainter(self)
@@ -483,9 +508,20 @@ class PetWindow(QWidget):
             if frame is None or frame.isNull():
                 return
             draw_size = self._scaled_size(frame.size())
+            bbox = self._model_bbox(frame)
+            # якорь — низ-центр МОДЕЛИ (не канваса): канвас сдвигается так,
+            # чтобы bbox модели встал в низ-центр окна — ноги на земле,
+            # центр на месте; пустой кадр — прежний якорь низ-центром канваса
+            if bbox.isNull():
+                dx = dy = 0
+            else:
+                sx = draw_size.width() / frame.width()
+                sy = draw_size.height() / frame.height()
+                dx = round((frame.width() / 2 - (bbox.x() + bbox.width() / 2)) * sx)
+                dy = round((frame.height() - (bbox.y() + bbox.height())) * sy)
             target = QRect(
-                (self.width() - draw_size.width()) // 2,
-                self.height() - draw_size.height(),
+                (self.width() - draw_size.width()) // 2 + dx,
+                self.height() - draw_size.height() + dy,
                 draw_size.width(),
                 draw_size.height(),
             )
@@ -495,6 +531,21 @@ class PetWindow(QWidget):
         finally:
             painter.end()
 
+    def _model_bbox(self, frame: QPixmap) -> QRect:
+        """Bbox модели кадра (непрозрачные пиксели) с кэшем по cacheKey.
+
+        Один расчёт на кадр: якорь отрисовки и анализатор (--show-frame-stats)
+        используют один и тот же bbox. Зеркальный кадр — свой cacheKey.
+        """
+        key = frame.cacheKey()
+        bbox = self._bbox_cache.get(key)
+        if bbox is None:
+            bbox = _alpha_bbox(frame.toImage())
+            if len(self._bbox_cache) > 512:
+                self._bbox_cache.clear()
+            self._bbox_cache[key] = bbox
+        return bbox
+
     def _draw_frame_stats(self, painter: QPainter, frame: QPixmap, target: QRect) -> None:
         """Анализатор модели: bbox модели, границы кадра и размеры (--show-frame-stats).
 
@@ -502,12 +553,7 @@ class PetWindow(QWidget):
         границы кадра, зелёная линия — «земля» (низ окна). Текст показывает
         размеры модели и кадра в пикселях отрисовки и оба масштаба.
         """
-        bbox = self._stats_cache.get(frame.cacheKey())
-        if bbox is None:
-            bbox = _alpha_bbox(frame.toImage())
-            if len(self._stats_cache) > 128:
-                self._stats_cache.clear()
-            self._stats_cache[frame.cacheKey()] = bbox
+        bbox = self._model_bbox(frame)
         self._stats_bbox = bbox
         # bbox модели в координатах отрисованного кадра (пропорционально)
         sx = target.width() / frame.width()

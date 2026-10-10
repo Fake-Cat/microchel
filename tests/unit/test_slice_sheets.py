@@ -356,7 +356,7 @@ class TestAutoScaleFor:
         assert slice_sheets.auto_scale_for("Walk/Right", 229) == pytest.approx(2.0)
 
     def test_median_content_height(self, sheet_root: Path) -> None:
-        """Авто-scale по медианной высоте: эффект-кадр не меняет масштаб клипа."""
+        """content_h — медиана; эффект-кадр не перетягивает масштаб клипа."""
 
         def draw(painter: QPainter) -> None:
             for x in (2, 14, 26):
@@ -367,7 +367,19 @@ class TestAutoScaleFor:
         result = slice_sheets.slice_sheet(_plan(), sheet_root)
 
         assert result.content_h == 8  # медиана, а не максимум (18)
-        assert result.scale == pytest.approx(slice_sheets.REF_HEIGHT_PX / 8)
+        assert result.scale == pytest.approx(slice_sheets.REF_HEIGHT_PX / 8)  # главная поза 8
+
+    def test_main_pose_height_morphing_keeps_stance(self) -> None:
+        """Морфинг (мяч, калачик) не перетягивает масштаб: главная поза — стойка."""
+        # Sleep/Wake: калачик 290–335 не должен растить стойку (429) выше эталона
+        assert slice_sheets.main_pose_height([429, 426, 335, 290, 306, 302, 365]) == 429
+
+    def test_main_pose_height_skips_effect_frames(self) -> None:
+        """Эффект-кадр выше MAIN_POSE_RATIO × медианы в главную позу не входит."""
+        assert slice_sheets.main_pose_height([8, 8, 8, 18]) == 8
+
+    def test_main_pose_height_empty(self) -> None:
+        assert slice_sheets.main_pose_height([]) == 0
 
 
 class TestDiagnostics:

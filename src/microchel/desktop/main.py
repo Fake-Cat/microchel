@@ -83,7 +83,8 @@ def start_showcase(
     Каждый клип играется целиком по playback-спеке (plan_frames без слота:
     once — один проход; loop-сегмент [a, b] — один цикл; prefix_once /
     suffix_on_exit; зеркало mirror="left"), затем пауза pause_s и следующий.
-    Idle-клипы не показываются отдельными слотами (играют фоном).
+    Idle-клипы не показываются отдельными слотами; фоновая idle в паузах
+    выключается — в паузе держится последний кадр слота (инспекция без фона).
     motion=walk — шаги EdgeWalker с разворотом у края, motion=traverse — шаги
     до края без разворота (допущение — спека FSM ещё не утверждена).
     only — подстрока-фильтр имён (без учёта регистра): показываются только
@@ -94,6 +95,7 @@ def start_showcase(
     Move/Transition играет отдельным слотом цикла, а не перед каждым клипом.
     """
     window.set_transition_enabled(False)
+    window.set_idle_fallback_enabled(False)  # пауза без фоновой idle — слот держится
     index = 0
     walker: EdgeWalker | None = None
     traverse_dx = 0  # шаг traverse; 0 — motion не активен

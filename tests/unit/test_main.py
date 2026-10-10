@@ -128,6 +128,7 @@ class FakeShowcaseWindow(QObject):
         self.calls: list[dict[str, object]] = []
         self.moves: list[int] = []
         self.transition_calls: list[bool] = []
+        self.idle_fallback_calls: list[bool] = []
 
     def available_clip_names(self) -> list[str]:
         return list(self._names)
@@ -147,6 +148,9 @@ class FakeShowcaseWindow(QObject):
 
     def set_transition_enabled(self, enabled: bool) -> None:
         self.transition_calls.append(bool(enabled))
+
+    def set_idle_fallback_enabled(self, enabled: bool) -> None:
+        self.idle_fallback_calls.append(bool(enabled))
 
 
 def test_start_showcase_plays_all_clips_in_order(qtbot: QtBot) -> None:
@@ -187,6 +191,15 @@ def test_start_showcase_disables_transition() -> None:
 
     timer = start_showcase(window, pause_s=0.05)
     assert window.transition_calls == [False]
+    timer.stop()
+
+
+def test_start_showcase_disables_idle_fallback() -> None:
+    """Фоновая idle в паузах отключена: слот держится без фоновой анимации."""
+    window = FakeShowcaseWindow()
+
+    timer = start_showcase(window, pause_s=0.05)
+    assert window.idle_fallback_calls == [False]
     timer.stop()
 
 

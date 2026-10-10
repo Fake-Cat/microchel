@@ -48,6 +48,9 @@ class AnimationPlayer(QObject):
         self._queue = AnimationQueue()
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
+        # PreciseTimer: CoarseTimer стреляет до 5% раньше срока — кадры и стыки
+        # анимаций «съедались» (фикс стыков, 2026-10-11)
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.timeout.connect(self._advance)
 
         self._clip: AnimationClip | None = None

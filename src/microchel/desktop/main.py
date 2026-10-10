@@ -10,11 +10,11 @@ import random
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
 from microchel.animation.queue import Priority
-from microchel.animation.spec import ClipSpec, plan_frames
+from microchel.animation.spec import ClipSpec
 from microchel.character.config import DEFAULT_CONFIG_PATH, load_behavior_config
 from microchel.character.controller import CharacterController, EdgeWalker
 from microchel.character.fsm import BehaviorFSM
@@ -71,18 +71,18 @@ def start_demo(window: PetWindow, interval_ms: int = 4000) -> QTimer:
 def start_showcase(
     window: PetWindow,
     *,
-    pause_s: float = 1.0,
+    pause_s: float = 0.0,
     speed: float = 1.0,
     walk_step_px: int = 3,
     walk_interval_ms: int = 60,
-    rng: random.Random | None = None,
     only: str | None = None,
 ) -> QTimer:
-    """Показать все анимации по очереди — полный цикл каждой (PHASE 4).
+    """Показать все анимации по очереди — полный лист кадров каждой (PHASE 4).
 
-    Каждый клип играется целиком по playback-спеке (plan_frames без слота:
-    once — один проход; loop-сегмент [a, b] — один цикл; prefix_once /
-    suffix_on_exit; зеркало mirror="left"), затем пауза pause_s и следующий.
+    Каждый клип играется целиком: все кадры по порядку (0..N-1), без повторов
+    и обрезки по loop-сегменту (loop/repeat — рантайм-семантика FSM, не показ).
+    Зеркало mirror="left" сохраняется; пауза pause_s (по умолчанию 0 — слоты
+    подряд, стык плавный) и следующий клип.
     Idle-клипы не показываются отдельными слотами; фоновая idle в паузах
     выключается — в паузе держится последний кадр слота (инспекция без фона).
     motion=walk — шаги EdgeWalker с разворотом у края, motion=traverse — шаги
@@ -99,7 +99,6 @@ def start_showcase(
     index = 0
     walker: EdgeWalker | None = None
     traverse_dx = 0  # шаг traverse; 0 — motion не активен
-    rng = rng or random.Random()
 
     motion_timer = QTimer(window)
     motion_timer.setInterval(max(1, walk_interval_ms))
@@ -114,6 +113,9 @@ def start_showcase(
 
     timer = QTimer(window)
     timer.setSingleShot(True)
+    # PreciseTimer: CoarseTimer стреляет до 5% раньше срока — стык слотов
+    # обрезал последний кадр (фикс стыков, 2026-10-11)
+    timer.setTimerType(Qt.TimerType.PreciseTimer)
 
     def next_clip() -> None:
         nonlocal index, walker, traverse_dx
@@ -148,17 +150,17 @@ def start_showcase(
                 traverse_dx = direction * walk_step_px
             motion_timer.start()
 
-        # план: полный цикл клипа (без слота) — как в рантайме за один проход
+        # план показа: полный лист кадров клипа (см. фикс 2026-10-11)
         frame_indices: Sequence[int] | None = None
         mirror = spec.mirror == "left"
         loop: bool | int = True
         slot_ms = 0
         if durations is not None:
-            plan = plan_frames(spec, durations, rng=rng)
-            frame_indices = plan.indices
-            mirror = plan.mirror
+            # полный лист кадров: показ = все кадры клипа по порядку; loop/repeat
+            # спеки — рантайм-семантика FSM и показ не обрезают (фикс 2026-10-11)
+            frame_indices = tuple(range(len(durations)))
             loop = False
-            played_ms = sum(durations[frame] for frame in plan.indices)
+            played_ms = sum(durations)
             slot_ms = int(played_ms / max(speed, 1e-6))
 
         if window.play_clip(
@@ -296,16 +298,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="NAME",
         help=(
-            "показать все анимации по очереди — полный цикл каждой (idle не "
+            "показать все анимации по очереди — все кадры каждой (idle не "
             "показывается); со значением NAME — только клипы, содержащие подстроку"
         ),
     )
     parser.add_argument(
         "--showcase-interval",
         type=float,
-        default=1.0,
+        default=0.0,
         metavar="SEC",
-        help="пауза между анимациями в --showcase, секунд (по умолчанию 1)",
+        help="пауза между анимациями в --showcase, секунд (по умолчанию 0 — слоты подряд)",
     )
     parser.add_argument(
         "--speed",
@@ -332,8 +334,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="синтетические системные события каждые 45–90 с (проверка механики FR-P3.6)",
     )
     args = parser.parse_args(argv)
-    if args.showcase_interval <= 0:
-        parser.error("--showcase-interval должен быть > 0")
+    if args.showcase_interval < 0:
+        parser.error("--showcase-interval должен быть >= 0")
     if args.speed <= 0:
         parser.error("--speed должен быть > 0")
     if args.pet_scale <= 0:

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import logging
-import random
 
 import pytest
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, Qt
 from pytestqt.qtbot import QtBot
 
 from microchel.animation.queue import Priority
@@ -226,13 +225,17 @@ def test_start_showcase_only_no_match_disables_showcase(
     assert any("dance" in record.getMessage() for record in caplog.records)
 
 
-def test_start_showcase_plays_full_cycle_segment() -> None:
-    """loop=[1, 2] из спеки: полный цикл = один проход сегмента (без кручения слота)."""
+def test_start_showcase_plays_full_clip_listing() -> None:
+    """Полный лист кадров (фикс): план показа = все кадры клипа по порядку.
+
+    loop-сегмент спеки не должен обрезать показ — иначе анимации «не
+    проигрываются полностью» (например, 4 кадра из 10 при loop=[6, 9]).
+    """
     spec = ClipSpec(name="Walk/Normal", frames=4, loop=(1, 2))
     window = FakeShowcaseWindow(["Walk/Normal"], specs={"Walk/Normal": spec})
 
     timer = start_showcase(window, pause_s=0.05)
-    assert window.calls[0]["frame_indices"] == (1, 2)
+    assert window.calls[0]["frame_indices"] == (0, 1, 2, 3)
     assert window.calls[0]["loop"] is False
     timer.stop()
 
@@ -248,17 +251,13 @@ def test_start_showcase_once_clip_plays_single_pass() -> None:
     timer.stop()
 
 
-def test_start_showcase_repeat_fill_uses_target() -> None:
-    """repeat_fill_ms учитывается: повторов ~ цель, но не «до слота» (его больше нет)."""
+def test_start_showcase_full_listing_ignores_repeat_fill() -> None:
+    """repeat_fill_ms — рантайм-семантика FSM: в показе кадры не повторяются."""
     spec = ClipSpec(name="Angry/Normal", frames=4, loop=(0, 1), repeat_fill_ms=400)
     window = FakeShowcaseWindow(["Angry/Normal"], specs={"Angry/Normal": spec})
 
-    timer = start_showcase(window, pause_s=0.05, rng=random.Random(42))
-    indices = window.calls[0]["frame_indices"]
-    assert isinstance(indices, tuple)
-    # сегмент (0, 1) по 100 мс: цель 400 мс → target 2 → 1..3 повтора
-    assert 2 <= len(indices) <= 6
-    assert set(indices) <= {0, 1}
+    timer = start_showcase(window, pause_s=0.05)
+    assert window.calls[0]["frame_indices"] == (0, 1, 2, 3)
     timer.stop()
 
 
@@ -307,7 +306,7 @@ def test_start_showcase_no_motion_without_spec(qtbot: QtBot) -> None:
 
 def test_parse_args_showcase_interval_default() -> None:
     args = parse_args(["--showcase"])
-    assert args.showcase_interval == 1.0  # пауза между анимациями
+    assert args.showcase_interval == 0.0  # по умолчанию слоты подряд — стык плавный
 
 
 def test_parse_args_showcase_interval_custom() -> None:
@@ -315,9 +314,25 @@ def test_parse_args_showcase_interval_custom() -> None:
     assert args.showcase_interval == 1.5
 
 
-def test_parse_args_showcase_interval_must_be_positive() -> None:
+def test_parse_args_showcase_interval_must_not_be_negative() -> None:
+    assert parse_args(["--showcase-interval", "0"]).showcase_interval == 0.0
     with pytest.raises(SystemExit):
-        parse_args(["--showcase-interval", "0"])
+        parse_args(["--showcase-interval", "-1"])
+
+
+def test_start_showcase_zero_pause_seam_is_playback_time() -> None:
+    """Стык слотов без паузы: следующий слот стартует по времени проигрывания.
+
+    Дополнительное мёртвое окно (пауза) между анимациями убирало плавность —
+    старый кадр висел pause + длительность последнего кадра. Таймер слота —
+    PreciseTimer: без досрочных выстрелов (CoarseTimer — до 5% раньше).
+    """
+    window = FakeShowcaseWindow(["Blink/Happy"])  # 4 кадра по 100 мс
+
+    timer = start_showcase(window)  # pause_s по умолчанию 0
+    assert timer.timerType() == Qt.TimerType.PreciseTimer
+    assert timer.interval() == 400  # ровно проигрывание плана, без паузы
+    timer.stop()
 
 
 def test_parse_args_speed_and_scale_defaults() -> None:

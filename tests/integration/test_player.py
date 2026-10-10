@@ -303,3 +303,15 @@ class TestSpeed:
         player.play(clip, speed=2.0)
         qtbot.wait(200)
         assert player.frame_index >= 1
+
+
+class TestTiming:
+    """Точность темпа кадров (фикс стыков анимаций, 2026-10-11)."""
+
+    def test_frame_timer_is_precise(self, player: AnimationPlayer) -> None:
+        """Таймер кадров — PreciseTimer.
+
+        Qt CoarseTimer стреляет до 5% раньше срока — кадры и стыки слотов
+        «съедались», анимации выглядели обрезанными.
+        """
+        assert player._timer.timerType() == Qt.TimerType.PreciseTimer

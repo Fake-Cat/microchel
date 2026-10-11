@@ -43,6 +43,21 @@ def select_qt_platform(env: Mapping[str, str] | None = None) -> str | None:
     return None
 
 
+def invisible_platform_warning(platform_name: str) -> str | None:
+    """Текст предупреждения, если платформа рисует без экрана (offscreen).
+
+    Ловит ситуацию «логи идут, окна нет»: например, QT_QPA_PLATFORM=offscreen
+    в окружении запускает приложение без видимого окна — анимации при этом
+    проигрываются. Возвращается текст предупреждения или None.
+    """
+    if platform_name == "offscreen":
+        return (
+            "Платформа offscreen: окно не появится на экране — "
+            "проверьте QT_QPA_PLATFORM в окружении запуска"
+        )
+    return None
+
+
 def start_demo(window: PetWindow, interval_ms: int = 4000) -> QTimer:
     """Демо-переключение анимаций для визуальной проверки PHASE 2 (FR-P2.4, FR-P2.5).
 
@@ -355,6 +370,9 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationName("microchel")
     logger.info("Qt platform: %s", app.platformName())
+    platform_warning = invisible_platform_warning(app.platformName())
+    if platform_warning:
+        logger.warning(platform_warning)
 
     bus = EventBus()
     window = PetWindow(bus=bus, frame_stats=args.show_frame_stats)

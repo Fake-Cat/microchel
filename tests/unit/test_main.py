@@ -12,6 +12,7 @@ from microchel.animation.queue import Priority
 from microchel.animation.spec import ClipSpec
 from microchel.character.states import CharacterState
 from microchel.desktop.main import (
+    invisible_platform_warning,
     parse_args,
     select_qt_platform,
     start_showcase,
@@ -43,6 +44,19 @@ def test_explicit_qt_platform_not_overridden() -> None:
 
 def test_empty_env_keeps_default() -> None:
     assert select_qt_platform(EMPTY_ENV) is None
+
+
+def test_invisible_platform_warning_offscreen() -> None:
+    """offscreen — громкое предупреждение «окна не будет» (баг «логи идут, окна нет»)."""
+    warning = invisible_platform_warning("offscreen")
+    assert warning is not None
+    assert "не появится" in warning
+    assert "QT_QPA_PLATFORM" in warning
+
+
+def test_invisible_platform_warning_visible_platforms() -> None:
+    assert invisible_platform_warning("xcb") is None
+    assert invisible_platform_warning("wayland") is None
 
 
 def test_parse_args_flags() -> None:

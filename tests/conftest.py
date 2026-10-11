@@ -9,12 +9,18 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication
+
+# Тесты рендерятся на offscreen-платформе (без окна на экране) — самодостаточно,
+# не полагаясь на QT_QPA_PLATFORM в окружении пользователя (setdefault:
+# явный выбор пользователя не перетирается).
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 SIZE = 160
 

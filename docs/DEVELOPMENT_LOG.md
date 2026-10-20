@@ -40,7 +40,7 @@ A5-1 офлайн-демо — OK; A5-2 живой Gemini: «Проверь со
 `system.metrics` → CPU 57°C, RAM 51/61 ГБ, диск 346/467 ГБ, uptime 24.5 ч, exit 0
 (52.8 с); A5-3 отказ сети/ключа — OK (интеграционные тесты + живые таймауты).
 Документация: `PHASE5_PLAN.md`, ADR-006, обновлены ARCHITECTURE/ROADMAP/
-STATUS/TESTING. **Коммит — по разрешению пользователя.**
+STATUS/TESTING. **Коммит `f262bad`.**
 
 ## 2026-10-11 — PHASE 4: showcase — полный лист кадров, стык слотов без пауз, PreciseTimer
 

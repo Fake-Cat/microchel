@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-10-11 — PHASE 5, спринт 5.1: Agent Core (CLI, Gemini, tool calling, безопасные инструменты)
+
+**Команда пользователя:** начать PHASE 5 (GUI-независимое Agent Core); PHASE 4
+приостановлена (вердикты P4-1…P4-6 — на паузе).
+
+**Реализовано (шаги 2–8 плана `docs/PHASE5_PLAN.md`):**
+- `common/events.py`: события `UserPrompt`, `AgentTaskStarted`, `AgentTaskFinished`.
+- `agent/`: `types.py` (TaskSpec/TaskResult/StepRecord/ToolCall/Limits), `config.py`
+  (`config/agent.toml` + `resolve_proxy_url` — ADR-006: CLI > конфиг >
+  https_proxy/HTTPS_PROXY/http_proxy/HTTP_PROXY > напрямую), `prompt.py`,
+  `journal.py` (JSONL, отказ записи — warning), `executor.py` (цикл LLM↔инструменты,
+  бюджеты, cancel через `threading.Event`, усечение вывода инструментов), `cli.py`
+  (argparse, `--offline`/`--json`/`--proxy`, коды выхода 0/1/2/3, SIGINT → cancel).
+- `agent/llm/`: `base.py` (LLMError-иерархия + Protocol), `http.py` (urllib,
+  ProxyHandler, ретрай 1× на 429/503), `gemini.py` (generateContent,
+  functionDeclarations из ToolSpec, round-trip thoughtSignature), `fake.py`.
+- `tools/`: `base.py`, `guard.py` (PathGuard — чтение только `allowed_roots`,
+  лимит байт, бинарь отсекается по `\x00`), `registry.py` (валидация, таймаут,
+  изоляция падений), `system_metrics.py`, `file_read.py` (files.read/list),
+  `services.py` (systemctl show, shell=False, regex-имя ≤256 — анти injection).
+
+**Диагностика (feedback loop: живой прогон через прокси `http://127.0.0.1:1081`):**
+- Второй вызов Gemini падал с 400 «Function call is missing a thought_signature» —
+  `thoughtSignature` клался **внутрь** `functionCall`, а API требует его на уровне
+  **part**. Фикс сериализации/парсинга (part-уровень, фоллбэк на старое место).
+- Read timeout на втором вызове (прокси медленный): `llm_timeout_s` 60 → 120.
+- Тесты написаны по фактическим сигнатурам существующих интерфейсов:
+  `EventBus.emit` (не `publish`), `EventBus.subscribe(type, handler)` (не единый
+  handler), `setup_logging(level: str)`; `list_dir` — файлы раньше каталогов;
+  сервисные имена — ASCII `ghost-service` (кириллица корректно отсекается guard'ом).
+
+**Результаты:** `pytest` — **376 passed** (+75 к 301 PHASE 4); `ruff` — чисто;
+A5-1 офлайн-демо — OK; A5-2 живой Gemini: «Проверь состояние этого компьютера» →
+`system.metrics` → CPU 57°C, RAM 51/61 ГБ, диск 346/467 ГБ, uptime 24.5 ч, exit 0
+(52.8 с); A5-3 отказ сети/ключа — OK (интеграционные тесты + живые таймауты).
+Документация: `PHASE5_PLAN.md`, ADR-006, обновлены ARCHITECTURE/ROADMAP/
+STATUS/TESTING. **Коммит — по разрешению пользователя.**
+
 ## 2026-10-11 — PHASE 4: showcase — полный лист кадров, стык слотов без пауз, PreciseTimer
 
 **Жалоба пользователя:** «пропуски кадров анимаций (то есть может зависнуть как

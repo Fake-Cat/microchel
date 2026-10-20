@@ -83,11 +83,11 @@
 
 ## PHASE 5 — AI Agent Core
 
-- [ ] LLM provider interface + API integration (Gemini/Groq/OpenRouter)
-- [ ] Tool registry, схемы аргументов, валидация
-- [ ] Agent execution loop, лимиты шагов, таймауты
-- [ ] Permissions (подтверждение опасных операций)
-- [ ] Memory (SQLite), logging, обработка ошибок LLM, prompt injection
+- [x] LLM provider interface + API integration (Gemini; Groq/OpenRouter — при необходимости) — спринт 5.1
+- [x] Tool registry, схемы аргументов, валидация — спринт 5.1
+- [x] Agent execution loop, лимиты шагов, таймауты — спринт 5.1
+- [ ] Permissions (подтверждение опасных операций) — спринт 5.2
+- [ ] Memory (SQLite), обработка ошибок LLM, prompt injection — частично: ошибки LLM (иерархия + ретраи) и журнал выполнения — спринт 5.1; SQLite и политика инъекций — спринт 5.2
 
 ## PHASE 6 — Linux Integration
 

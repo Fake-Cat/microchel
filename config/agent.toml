@@ -1,0 +1,28 @@
+# Конфигурация Agent Core (PHASE 5, docs/PHASE5_PLAN.md).
+# Секреты сюда НЕ пишутся: API-ключ берётся из окружения/.env (api_key_env).
+
+# Провайдер LLM: gemini | fake (fake — офлайн-демо без сети)
+provider = "gemini"
+model = "gemini-3.8-flash"
+api_key_env = "GEMINI_API_KEY"
+
+# Прокси для LLM-запросов. Пусто → https_proxy/http_proxy из окружения/.env,
+# затем прямое подключение. Пример: "http://127.0.0.1:1081"
+# proxy_url = "http://127.0.0.1:1081"
+
+# Каталоги, доступные инструментам files.* (только чтение).
+# "~" раскрывается в домашний каталог. Пустой список = чтение запрещено.
+allowed_roots = ["~"]
+
+# Журнал выполнения (JSONL). Пусто → ~/.local/share/microchel/agent_journal.jsonl
+# journal_path = ""
+
+# Бюджеты одной задачи
+[limits]
+max_steps = 8
+max_llm_calls = 12
+max_tool_calls = 24
+wall_time_s = 180
+llm_timeout_s = 120
+tool_timeout_s = 15
+max_tool_output_chars = 8000

@@ -44,3 +44,28 @@ class CharacterAction:
     """Действие FSM, объявленное наружу (character → agent, PHASE 5+)."""
 
     action: str  # имя состояния: walk, sleep, coffee, ...
+
+
+# --- PHASE 5: события Agent Core (ARCHITECTURE.md, «Форматы событий») ---
+
+
+@dataclass(frozen=True, slots=True)
+class UserPrompt:
+    """Текстовое поручение пользователя (desktop/CLI → agent)."""
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTaskStarted:
+    """Задача агента начата (agent → все подписчики)."""
+
+    task_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTaskFinished:
+    """Задача агента завершена со статусом (agent → все подписчики)."""
+
+    task_id: str
+    status: str  # значение agent.types.TaskStatus: completed/failed/cancelled/limit_reached
